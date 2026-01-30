@@ -35,8 +35,8 @@
       --bg-panel: rgba(17, 24, 32, 0.92);
       --border-color: rgba(255, 180, 50, 0.25);
       --text-primary: #f0f4f8;
-      --text-secondary: #8a9aaa;
-      --text-muted: #5a6a7a;
+      --text-secondary: #a0b0c0;
+      --text-muted: #8899aa;
       --accent-amber: #ffb432;
       --accent-amber-dim: rgba(255, 180, 50, 0.6);
       --accent-green: #00ff88;
@@ -83,8 +83,8 @@
       --bg-panel: rgba(0, 0, 0, 0.95);
       --border-color: rgba(0, 255, 0, 0.3);
       --text-primary: #00ff00;
-      --text-secondary: #00cc00;
-      --text-muted: #008800;
+      --text-secondary: #00dd00;
+      --text-muted: #00bb00;
       --accent-amber: #ffaa00;
       --accent-amber-dim: rgba(255, 170, 0, 0.5);
       --accent-green: #00ff00;
@@ -2353,30 +2353,30 @@
           {/* LEFT SIDEBAR */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflow: 'hidden' }}>
             {/* DE Location */}
-            <div className="panel" style={{ padding: '10px', flex: '0 0 auto' }}>
-              <div style={{ fontSize: '10px', color: 'var(--accent-cyan)', fontWeight: '700', marginBottom: '6px' }}>📍 DE - YOUR LOCATION</div>
-              <div style={{ fontFamily: 'JetBrains Mono', fontSize: '11px' }}>
-                <div style={{ color: 'var(--accent-amber)', fontSize: '14px', fontWeight: '700' }}>{deGrid}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{config.location.lat.toFixed(2)}°, {config.location.lon.toFixed(2)}°</div>
-                <div style={{ marginTop: '4px', fontSize: '10px' }}>
-                  <span style={{ color: 'var(--text-muted)' }}>☀ </span>
+            <div className="panel" style={{ padding: '12px', flex: '0 0 auto' }}>
+              <div style={{ fontSize: '11px', color: 'var(--accent-cyan)', fontWeight: '700', marginBottom: '8px' }}>📍 DE - YOUR LOCATION</div>
+              <div style={{ fontFamily: 'JetBrains Mono', fontSize: '13px' }}>
+                <div style={{ color: 'var(--accent-amber)', fontSize: '18px', fontWeight: '700' }}>{deGrid}</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '2px' }}>{config.location.lat.toFixed(2)}°, {config.location.lon.toFixed(2)}°</div>
+                <div style={{ marginTop: '6px', fontSize: '12px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>☀ </span>
                   <span style={{ color: 'var(--accent-amber)' }}>{deSunTimes.sunrise}</span>
-                  <span style={{ color: 'var(--text-muted)' }}> → </span>
+                  <span style={{ color: 'var(--text-secondary)' }}> → </span>
                   <span style={{ color: 'var(--accent-purple)' }}>{deSunTimes.sunset}</span>
                 </div>
               </div>
             </div>
             
             {/* DX Location */}
-            <div className="panel" style={{ padding: '10px', flex: '0 0 auto' }}>
-              <div style={{ fontSize: '10px', color: 'var(--accent-green)', fontWeight: '700', marginBottom: '6px' }}>🎯 DX - TARGET</div>
-              <div style={{ fontFamily: 'JetBrains Mono', fontSize: '11px' }}>
-                <div style={{ color: 'var(--accent-amber)', fontSize: '14px', fontWeight: '700' }}>{dxGrid}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{dxLocation.lat.toFixed(2)}°, {dxLocation.lon.toFixed(2)}°</div>
-                <div style={{ marginTop: '4px', fontSize: '10px' }}>
-                  <span style={{ color: 'var(--text-muted)' }}>☀ </span>
+            <div className="panel" style={{ padding: '12px', flex: '0 0 auto' }}>
+              <div style={{ fontSize: '11px', color: 'var(--accent-green)', fontWeight: '700', marginBottom: '8px' }}>🎯 DX - TARGET</div>
+              <div style={{ fontFamily: 'JetBrains Mono', fontSize: '13px' }}>
+                <div style={{ color: 'var(--accent-amber)', fontSize: '18px', fontWeight: '700' }}>{dxGrid}</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '2px' }}>{dxLocation.lat.toFixed(2)}°, {dxLocation.lon.toFixed(2)}°</div>
+                <div style={{ marginTop: '6px', fontSize: '12px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>☀ </span>
                   <span style={{ color: 'var(--accent-amber)' }}>{dxSunTimes.sunrise}</span>
-                  <span style={{ color: 'var(--text-muted)' }}> → </span>
+                  <span style={{ color: 'var(--text-secondary)' }}> → </span>
                   <span style={{ color: 'var(--accent-purple)' }}>{dxSunTimes.sunset}</span>
                 </div>
               </div>
