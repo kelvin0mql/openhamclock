@@ -119,14 +119,55 @@ app.get('/api/hamqsl/conditions', async (req, res) => {
 app.get('/api/dxcluster/spots', async (req, res) => {
   console.log('[DX Cluster] Fetching spots...');
   
-  // Try DX Heat API first (most reliable)
+  // Try DXCluster.co API first (very reliable JSON API)
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    
+    const response = await fetch('https://dxcluster.co/api/v1/spots?limit=30', {
+      headers: { 
+        'User-Agent': 'OpenHamClock/3.3',
+        'Accept': 'application/json'
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    
+    if (response.ok) {
+      const data = await response.json();
+      console.log('[DX Cluster] dxcluster.co returned', data.length, 'spots');
+      if (data && data.length > 0) {
+        const spots = data.slice(0, 20).map(spot => ({
+          freq: spot.frequency ? (parseFloat(spot.frequency) / 1000).toFixed(3) : '0.000',
+          call: spot.dx_callsign || spot.callsign || 'UNKNOWN',
+          comment: spot.comment || '',
+          time: spot.time ? spot.time.substring(11, 16) + 'z' : '',
+          spotter: spot.spotter_callsign || ''
+        }));
+        return res.json(spots);
+      }
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.log('[DX Cluster] dxcluster.co timeout');
+    } else {
+      console.error('[DX Cluster] dxcluster.co error:', error.message);
+    }
+  }
+  
+  // Try DX Heat API
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    
     const response = await fetch('https://dxheat.com/dxc/data.php?include_modes=cw,ssb,ft8,ft4,rtty&include_bands=160,80,60,40,30,20,17,15,12,10,6&limit=30', {
       headers: { 
-        'User-Agent': 'OpenHamClock/3.1',
+        'User-Agent': 'OpenHamClock/3.3',
         'Accept': 'application/json'
-      }
+      },
+      signal: controller.signal
     });
+    clearTimeout(timeout);
     
     if (response.ok) {
       const text = await response.text();
@@ -149,51 +190,58 @@ app.get('/api/dxcluster/spots', async (req, res) => {
       }
     }
   } catch (error) {
-    console.error('[DX Cluster] DXHeat error:', error.message);
+    if (error.name === 'AbortError') {
+      console.log('[DX Cluster] DXHeat timeout');
+    } else {
+      console.error('[DX Cluster] DXHeat error:', error.message);
+    }
   }
 
-  // Try PSK Reporter as fallback (very reliable)
+  // Try RBN (Reverse Beacon Network) API
   try {
-    const response = await fetch('https://pskreporter.info/cgi-bin/pskquery5.pl?encap=1&callback=0&statistics=0&noactive=1&nolocator=1&rronly=1&flowStartSeconds=-900&limit=30', {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    
+    const response = await fetch('https://reversebeacon.net/api/spots.php?r=30', {
       headers: { 
-        'User-Agent': 'OpenHamClock/3.1'
-      }
+        'User-Agent': 'OpenHamClock/3.3'
+      },
+      signal: controller.signal
     });
+    clearTimeout(timeout);
     
     if (response.ok) {
-      const text = await response.text();
-      console.log('[DX Cluster] PSKReporter response length:', text.length);
-      // PSK Reporter returns XML, parse it
-      const callMatches = text.match(/senderCallsign="([^"]+)"/g) || [];
-      const freqMatches = text.match(/frequency="([^"]+)"/g) || [];
-      const modeMatches = text.match(/mode="([^"]+)"/g) || [];
-      
-      if (callMatches.length > 0) {
-        const spots = callMatches.slice(0, 20).map((match, i) => {
-          const call = match.replace('senderCallsign="', '').replace('"', '');
-          const freq = freqMatches[i] ? (parseFloat(freqMatches[i].replace('frequency="', '').replace('"', '')) / 1000000).toFixed(3) : '0.000';
-          const mode = modeMatches[i] ? modeMatches[i].replace('mode="', '').replace('"', '') : '';
-          return {
-            freq: freq,
-            call: call,
-            comment: mode,
-            time: new Date().toISOString().substring(11, 16) + 'z',
-            spotter: 'PSK'
-          };
-        });
-        console.log('[DX Cluster] PSKReporter returned', spots.length, 'spots');
+      const data = await response.json();
+      console.log('[DX Cluster] RBN returned', data?.length || 0, 'spots');
+      if (data && data.length > 0) {
+        const spots = data.slice(0, 20).map(spot => ({
+          freq: spot.freq ? (parseFloat(spot.freq) / 1000).toFixed(3) : '0.000',
+          call: spot.dx || spot.callsign || 'UNKNOWN',
+          comment: spot.mode ? `${spot.mode} ${spot.db || ''}dB` : '',
+          time: spot.time || new Date().toISOString().substring(11, 16) + 'z',
+          spotter: spot.de || ''
+        }));
         return res.json(spots);
       }
     }
   } catch (error) {
-    console.error('[DX Cluster] PSKReporter error:', error.message);
+    if (error.name === 'AbortError') {
+      console.log('[DX Cluster] RBN timeout');
+    } else {
+      console.error('[DX Cluster] RBN error:', error.message);
+    }
   }
 
   // Try HamQTH DX Cluster
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    
     const response = await fetch('https://www.hamqth.com/dxc_csv.php?limit=30', {
-      headers: { 'User-Agent': 'OpenHamClock/3.1' }
+      headers: { 'User-Agent': 'OpenHamClock/3.3' },
+      signal: controller.signal
     });
+    clearTimeout(timeout);
     
     if (response.ok) {
       const text = await response.text();
@@ -219,17 +267,26 @@ app.get('/api/dxcluster/spots', async (req, res) => {
       }
     }
   } catch (error) {
-    console.error('[DX Cluster] HamQTH error:', error.message);
+    if (error.name === 'AbortError') {
+      console.log('[DX Cluster] HamQTH timeout');
+    } else {
+      console.error('[DX Cluster] HamQTH error:', error.message);
+    }
   }
 
-  // Try DX Watch legacy endpoint
+  // Try DXWatch as last resort
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    
     const response = await fetch('https://dxwatch.com/dxsd1/s.php?s=0&r=30', {
       headers: { 
-        'User-Agent': 'OpenHamClock/3.1',
+        'User-Agent': 'OpenHamClock/3.3',
         'Accept': '*/*'
-      }
+      },
+      signal: controller.signal
     });
+    clearTimeout(timeout);
     
     if (response.ok) {
       const text = await response.text();
@@ -252,11 +309,14 @@ app.get('/api/dxcluster/spots', async (req, res) => {
       }
     }
   } catch (error) {
-    console.error('[DX Cluster] DXWatch error:', error.message);
+    if (error.name === 'AbortError') {
+      console.log('[DX Cluster] DXWatch timeout');
+    } else {
+      console.error('[DX Cluster] DXWatch error:', error.message);
+    }
   }
 
   console.log('[DX Cluster] All sources failed, returning empty');
-  // Return empty array if all sources fail
   res.json([]);
 });
 
