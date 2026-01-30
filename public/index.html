@@ -1162,7 +1162,7 @@
       }, [potaSpots]);
 
       return (
-        <div style={{ position: 'relative', height: '100%', minHeight: '350px' }}>
+        <div style={{ position: 'relative', height: '100%', minHeight: '200px' }}>
           <div ref={mapRef} style={{ height: '100%', width: '100%', borderRadius: '8px' }} />
           
           {/* Map style selector */}
@@ -2147,40 +2147,207 @@
         );
       }
 
-      // Modern Layout (default)
+      // Modern Layout (default) - Compact single-screen design
       return (
-        <div style={{ minHeight: '100vh', background: 'var(--bg-primary)' }}>
-          <Header callsign={config.callsign} uptime={uptime} version="3.3.0" onSettingsClick={() => setShowSettings(true)} />
-          
-          <main style={{ padding: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gridTemplateRows: 'auto 1fr auto', gap: '16px', maxWidth: '1920px', margin: '0 auto', minHeight: 'calc(100vh - 120px)' }}>
-            {/* Row 1 */}
-            <ClockPanel label="UTC Time" time={utcTime} date={utcDate} isUtc={true} />
-            <ClockPanel label="Local Time" time={localTime} date={localDate} isUtc={false} />
-            <LocationPanel type="DE" location={config.location} gridSquare={deGrid} sunTimes={deSunTimes} otherLocation={dxLocation} />
-            <LocationPanel type="DX" location={dxLocation} gridSquare={dxGrid} sunTimes={dxSunTimes} otherLocation={config.location} />
+        <div style={{ 
+          height: '100vh', 
+          background: 'var(--bg-primary)',
+          display: 'grid',
+          gridTemplateColumns: '280px 1fr 280px',
+          gridTemplateRows: '50px 1fr',
+          gap: '8px',
+          padding: '8px',
+          overflow: 'hidden'
+        }}>
+          {/* TOP BAR - spans full width */}
+          <div style={{ 
+            gridColumn: '1 / -1',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: 'var(--bg-panel)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '6px',
+            padding: '0 16px',
+            fontFamily: 'JetBrains Mono, monospace'
+          }}>
+            {/* Callsign & Settings */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <span 
+                style={{ fontSize: '20px', fontWeight: '900', color: 'var(--accent-amber)', cursor: 'pointer', fontFamily: 'Orbitron, monospace' }}
+                onClick={() => setShowSettings(true)}
+                title="Click for settings"
+              >
+                {config.callsign}
+              </span>
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>v3.3.0</span>
+            </div>
             
-            {/* Row 2: Map + Side Panel */}
-            <div style={{ gridColumn: 'span 3', minHeight: '400px' }}>
-              <WorldMap deLocation={config.location} dxLocation={dxLocation} onDXChange={handleDXChange} potaSpots={potaSpots.data} />
-              <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '8px', fontFamily: 'JetBrains Mono', textAlign: 'center' }}>
-                Click anywhere on map to set DX location • Use buttons to change map style
+            {/* UTC Clock */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '10px', color: 'var(--accent-cyan)' }}>UTC</span>
+              <span style={{ fontSize: '22px', fontWeight: '700', color: 'var(--accent-cyan)', fontFamily: 'Orbitron, monospace' }}>{utcTime}</span>
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{utcDate}</span>
+            </div>
+            
+            {/* Local Clock */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '10px', color: 'var(--accent-amber)' }}>LOCAL</span>
+              <span style={{ fontSize: '22px', fontWeight: '700', color: 'var(--accent-amber)', fontFamily: 'Orbitron, monospace' }}>{localTime}</span>
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{localDate}</span>
+            </div>
+            
+            {/* Solar Quick Stats */}
+            <div style={{ display: 'flex', gap: '16px', fontSize: '11px' }}>
+              <div><span style={{ color: 'var(--text-muted)' }}>SFI </span><span style={{ color: 'var(--accent-amber)', fontWeight: '600' }}>{spaceWeather.data?.solarFlux || '--'}</span></div>
+              <div><span style={{ color: 'var(--text-muted)' }}>K </span><span style={{ color: spaceWeather.data?.kIndex >= 4 ? 'var(--accent-red)' : 'var(--accent-green)', fontWeight: '600' }}>{spaceWeather.data?.kIndex ?? '--'}</span></div>
+              <div><span style={{ color: 'var(--text-muted)' }}>SSN </span><span style={{ color: 'var(--accent-cyan)', fontWeight: '600' }}>{spaceWeather.data?.sunspotNumber || '--'}</span></div>
+            </div>
+            
+            {/* Settings Button */}
+            <button
+              onClick={() => setShowSettings(true)}
+              style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', padding: '6px 12px', borderRadius: '4px', color: 'var(--text-secondary)', fontSize: '11px', cursor: 'pointer' }}
+            >
+              ⚙ Settings
+            </button>
+          </div>
+          
+          {/* LEFT SIDEBAR */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflow: 'hidden' }}>
+            {/* DE Location */}
+            <div className="panel" style={{ padding: '10px', flex: '0 0 auto' }}>
+              <div style={{ fontSize: '10px', color: 'var(--accent-cyan)', fontWeight: '700', marginBottom: '6px' }}>📍 DE - YOUR LOCATION</div>
+              <div style={{ fontFamily: 'JetBrains Mono', fontSize: '11px' }}>
+                <div style={{ color: 'var(--accent-amber)', fontSize: '14px', fontWeight: '700' }}>{deGrid}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{config.location.lat.toFixed(2)}°, {config.location.lon.toFixed(2)}°</div>
+                <div style={{ marginTop: '4px', fontSize: '10px' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>☀ </span>
+                  <span style={{ color: 'var(--accent-amber)' }}>{deSunTimes.sunrise}</span>
+                  <span style={{ color: 'var(--text-muted)' }}> → </span>
+                  <span style={{ color: 'var(--accent-purple)' }}>{deSunTimes.sunset}</span>
+                </div>
               </div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <SpaceWeatherPanel data={spaceWeather.data} loading={spaceWeather.loading} />
-              <ContestPanel contests={contests.data} loading={contests.loading} />
+            
+            {/* DX Location */}
+            <div className="panel" style={{ padding: '10px', flex: '0 0 auto' }}>
+              <div style={{ fontSize: '10px', color: 'var(--accent-green)', fontWeight: '700', marginBottom: '6px' }}>🎯 DX - TARGET</div>
+              <div style={{ fontFamily: 'JetBrains Mono', fontSize: '11px' }}>
+                <div style={{ color: 'var(--accent-amber)', fontSize: '14px', fontWeight: '700' }}>{dxGrid}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{dxLocation.lat.toFixed(2)}°, {dxLocation.lon.toFixed(2)}°</div>
+                <div style={{ marginTop: '4px', fontSize: '10px' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>☀ </span>
+                  <span style={{ color: 'var(--accent-amber)' }}>{dxSunTimes.sunrise}</span>
+                  <span style={{ color: 'var(--text-muted)' }}> → </span>
+                  <span style={{ color: 'var(--accent-purple)' }}>{dxSunTimes.sunset}</span>
+                </div>
+              </div>
             </div>
             
-            {/* Row 3 */}
-            <BandConditionsPanel bands={bandConditions.data} loading={bandConditions.loading} />
-            <DXClusterPanel spots={dxCluster.data} loading={dxCluster.loading} />
-            <POTAPanel activities={potaSpots.data} loading={potaSpots.loading} />
-            <PropagationPanel propagation={propagation.data} loading={propagation.loading} />
-          </main>
-
-          <footer style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }}>
-            OpenHamClock v3.3.0 | In memory of Elwood Downey WB0OEW | Map tiles © OpenStreetMap, ESRI, CARTO | 73 de {config.callsign}
-          </footer>
+            {/* Band Conditions - Compact */}
+            <div className="panel" style={{ padding: '10px', flex: '1 1 auto', overflow: 'hidden', minHeight: 0 }}>
+              <div style={{ fontSize: '10px', color: 'var(--accent-purple)', fontWeight: '700', marginBottom: '6px' }}>📊 BAND CONDITIONS</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px', fontSize: '10px', fontFamily: 'JetBrains Mono' }}>
+                {bandConditions.data.map(band => (
+                  <div key={band.band} style={{ 
+                    textAlign: 'center', 
+                    padding: '4px 2px',
+                    background: 'var(--bg-tertiary)',
+                    borderRadius: '3px'
+                  }}>
+                    <div style={{ fontWeight: '600', color: band.status === 'GOOD' ? 'var(--accent-green)' : band.status === 'FAIR' ? 'var(--accent-amber)' : 'var(--text-muted)' }}>{band.band}</div>
+                    <div style={{ fontSize: '8px', color: 'var(--text-muted)' }}>{band.status?.substring(0,4)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+            {/* Propagation Compact */}
+            <div className="panel" style={{ padding: '10px', flex: '1 1 auto', overflow: 'hidden', minHeight: 0 }}>
+              <div style={{ fontSize: '10px', color: 'var(--accent-cyan)', fontWeight: '700', marginBottom: '6px' }}>📡 PROPAGATION TO DX</div>
+              {propagation.data ? (
+                <div style={{ fontSize: '10px', fontFamily: 'JetBrains Mono' }}>
+                  <div style={{ marginBottom: '6px', color: 'var(--text-muted)', fontSize: '9px' }}>
+                    {Math.round(propagation.data.distance).toLocaleString()} km path
+                  </div>
+                  {propagation.data.currentBands.slice(0, 6).map(b => (
+                    <div key={b.band} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                      <span style={{ width: '32px', color: b.reliability >= 50 ? 'var(--accent-green)' : 'var(--text-muted)' }}>{b.band}</span>
+                      <div style={{ flex: 1, height: '8px', background: 'var(--bg-tertiary)', borderRadius: '2px', overflow: 'hidden' }}>
+                        <div style={{ width: `${b.reliability}%`, height: '100%', background: b.reliability >= 70 ? '#00ff88' : b.reliability >= 50 ? '#88ff00' : b.reliability >= 30 ? '#ffcc00' : '#ff4444', borderRadius: '2px' }} />
+                      </div>
+                      <span style={{ width: '28px', fontSize: '9px', color: b.reliability >= 50 ? 'var(--accent-green)' : 'var(--text-muted)' }}>{b.reliability}%</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Loading...</div>
+              )}
+            </div>
+          </div>
+          
+          {/* CENTER - MAP */}
+          <div style={{ position: 'relative', borderRadius: '6px', overflow: 'hidden' }}>
+            <WorldMap deLocation={config.location} dxLocation={dxLocation} onDXChange={handleDXChange} potaSpots={potaSpots.data} />
+            <div style={{ position: 'absolute', bottom: '8px', left: '50%', transform: 'translateX(-50%)', fontSize: '9px', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.7)', padding: '2px 8px', borderRadius: '4px' }}>
+              Click map to set DX • 73 de {config.callsign}
+            </div>
+          </div>
+          
+          {/* RIGHT SIDEBAR */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflow: 'hidden' }}>
+            {/* DX Cluster - Compact */}
+            <div className="panel" style={{ padding: '10px', flex: '1 1 auto', overflow: 'hidden', minHeight: 0 }}>
+              <div style={{ fontSize: '10px', color: 'var(--accent-green)', fontWeight: '700', marginBottom: '6px' }}>
+                🌐 DX CLUSTER <span style={{ color: 'var(--accent-green)', fontSize: '8px' }}>● LIVE</span>
+              </div>
+              <div style={{ overflow: 'auto', maxHeight: 'calc(100% - 20px)' }}>
+                {dxCluster.data.slice(0, 8).map((s, i) => (
+                  <div key={i} style={{ padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '10px', fontFamily: 'JetBrains Mono' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--accent-cyan)' }}>{s.freq}</span>
+                      <span style={{ color: 'var(--accent-amber)', fontWeight: '600' }}>{s.call}</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '9px' }}>{s.time}</span>
+                    </div>
+                  </div>
+                ))}
+                {dxCluster.data.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>No spots</div>}
+              </div>
+            </div>
+            
+            {/* POTA - Compact */}
+            <div className="panel" style={{ padding: '10px', flex: '0 0 auto' }}>
+              <div style={{ fontSize: '10px', color: 'var(--accent-amber)', fontWeight: '700', marginBottom: '6px' }}>🏕 POTA ACTIVATORS</div>
+              <div style={{ fontSize: '10px', fontFamily: 'JetBrains Mono' }}>
+                {potaSpots.data.slice(0, 5).map((a, i) => (
+                  <div key={i} style={{ padding: '2px 0', display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--accent-amber)' }}>{a.call}</span>
+                    <span style={{ color: 'var(--accent-purple)' }}>{a.ref}</span>
+                    <span style={{ color: 'var(--accent-green)' }}>{a.freq}</span>
+                  </div>
+                ))}
+                {potaSpots.data.length === 0 && <div style={{ color: 'var(--text-muted)' }}>No activators</div>}
+              </div>
+            </div>
+            
+            {/* Contests - Compact */}
+            <div className="panel" style={{ padding: '10px', flex: '1 1 auto', overflow: 'hidden', minHeight: 0 }}>
+              <div style={{ fontSize: '10px', color: 'var(--accent-purple)', fontWeight: '700', marginBottom: '6px' }}>🏆 CONTESTS</div>
+              <div style={{ overflow: 'auto', maxHeight: 'calc(100% - 20px)', fontSize: '10px', fontFamily: 'JetBrains Mono' }}>
+                {contests.data.slice(0, 6).map((c, i) => (
+                  <div key={i} style={{ padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div style={{ color: c.status === 'active' ? 'var(--accent-green)' : 'var(--text-secondary)', fontWeight: c.status === 'active' ? '700' : '400' }}>
+                      {c.name} {c.status === 'active' && <span style={{ animation: 'blink 1s infinite' }}>●</span>}
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '9px' }}>
+                      {c.mode} • {new Date(c.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
 
           {/* Settings Panel */}
           <SettingsPanel 
