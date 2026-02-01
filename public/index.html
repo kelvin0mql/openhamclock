@@ -4080,8 +4080,11 @@
       spaceWeather, bandConditions, solarIndices, potaSpots, dxCluster, dxPaths, dxpeditions, contests, propagation, mySpots, satellites,
       localWeather, use12Hour, onTimeFormatToggle,
       onSettingsClick, onFullscreenToggle, isFullscreen,
-      mapLayers, toggleDXPaths, togglePOTA, toggleSatellites
+      mapLayers, toggleDXPaths, togglePOTA, toggleSatellites,
+      dxFilters, onFilterChange
     }) => {
+      // Alias for setDxFilters used in the component
+      const setDxFilters = onFilterChange;
       const bearing = calculateBearing(config.location.lat, config.location.lon, dxLocation.lat, dxLocation.lon);
       const distance = calculateDistance(config.location.lat, config.location.lon, dxLocation.lat, dxLocation.lon);
 
@@ -5208,6 +5211,8 @@
               toggleDXPaths={toggleDXPaths}
               togglePOTA={togglePOTA}
               toggleSatellites={toggleSatellites}
+              dxFilters={dxFilters}
+              onFilterChange={setDxFilters}
             />
             <SettingsPanel 
               isOpen={showSettings} 
