@@ -751,6 +751,7 @@
             '17m': (sfi - 100) * 0.4,
             '15m': (sfi - 100) * 0.45,
             '12m': (sfi - 100) * 0.5,
+            '11m': (sfi - 100) * 0.52,  // CB band - similar to 12m/10m
             '10m': (sfi - 100) * 0.55,
             '6m': (sfi - 100) * 0.6,
             '2m': 0, // VHF not affected by HF propagation
@@ -777,6 +778,7 @@
             '17m': isDaytime ? 25 : -20,
             '15m': isDaytime ? 20 : -25, // Day band
             '12m': isDaytime ? 15 : -30,
+            '11m': isDaytime ? 15 : -32, // CB band - day band, needs high SFI
             '10m': isDaytime ? 15 : -35, // Day band, needs high SFI
             '6m': isDaytime ? 10 : -40,  // Sporadic E, mostly daytime
             '2m': 10, // Local/tropo - always available
@@ -785,7 +787,7 @@
           score += timeImpact[band] || 0;
           
           // High bands need minimum SFI to open
-          if (['10m', '12m', '6m'].includes(band) && sfi < 100) score -= 30;
+          if (['10m', '11m', '12m', '6m'].includes(band) && sfi < 100) score -= 30;
           if (['15m', '17m'].includes(band) && sfi < 80) score -= 15;
           
           // Convert score to condition
@@ -794,7 +796,7 @@
           return 'POOR';
         };
         
-        const bands = ['160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m', '6m', '2m'];
+        const bands = ['160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '11m', '10m', '6m', '2m'];
         const conditions = bands.map(band => ({
           band,
           condition: calculateCondition(band)
@@ -1768,7 +1770,7 @@
         }
       };
 
-      const bands = ['80m', '40m', '30m', '20m', '17m', '15m', '12m', '10m'];
+      const bands = ['80m', '40m', '30m', '20m', '17m', '15m', '12m', '11m', '10m'];
       
       const viewModeLabels = {
         chart: '▤ chart',
@@ -1792,7 +1794,7 @@
             /* Band Conditions Grid View */
             <div style={{ padding: '4px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px' }}>
-                {(bandConditions?.data || []).slice(0, 12).map((band, idx) => {
+                {(bandConditions?.data || []).slice(0, 13).map((band, idx) => {
                   const style = getBandStyle(band.condition);
                   return (
                     <div key={idx} style={{ 
@@ -1974,7 +1976,7 @@
                     <span><span style={{ color: 'var(--text-muted)' }}>K </span><span style={{ color: solarData.kIndex >= 4 ? '#ff4444' : '#00ff88' }}>{solarData.kIndex}</span></span>
                   </div>
                   
-                  {currentBands.slice(0, 8).map((band, idx) => (
+                  {currentBands.slice(0, 11).map((band, idx) => (
                     <div key={band.band} style={{ 
                       display: 'grid', 
                       gridTemplateColumns: '32px 1fr 40px', 
@@ -2608,6 +2610,7 @@
               else if (freq >= 18 && freq < 18.5) { color = '#66ffcc'; textColor = '#000'; } // 17m - teal
               else if (freq >= 21 && freq < 21.5) { color = '#66ccff'; textColor = '#000'; } // 15m - cyan
               else if (freq >= 24 && freq < 25) { color = '#6699ff'; textColor = '#fff'; } // 12m - blue (darker, white text)
+              else if (freq >= 26 && freq < 28) { color = '#8866ff'; textColor = '#fff'; } // 11m - violet (CB band)
               else if (freq >= 28 && freq < 30) { color = '#9966ff'; textColor = '#fff'; } // 10m - purple (darker, white text)
               else if (freq >= 50 && freq < 54) { color = '#ff66ff'; textColor = '#000'; } // 6m - magenta
               
@@ -3188,7 +3191,7 @@
       ];
       
       // Bands
-      const bands = ['160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m', '6m', '2m', '70cm'];
+      const bands = ['160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '11m', '10m', '6m', '2m', '70cm'];
       
       // Modes
       const modes = ['CW', 'SSB', 'FT8', 'FT4', 'RTTY', 'PSK', 'AM', 'FM'];
