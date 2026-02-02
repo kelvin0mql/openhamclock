@@ -22,6 +22,13 @@ export default defineConfig({
       '@styles': path.resolve(__dirname, './src/styles')
     }
   },
+  define: {
+    // mqtt.js needs these for browser
+    global: 'globalThis',
+  },
+  optimizeDeps: {
+    include: ['mqtt']
+  },
   build: {
     outDir: 'dist',
     sourcemap: false,
@@ -29,7 +36,8 @@ export default defineConfig({
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom'],
-          satellite: ['satellite.js']
+          satellite: ['satellite.js'],
+          mqtt: ['mqtt']
         }
       }
     }

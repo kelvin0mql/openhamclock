@@ -8,7 +8,7 @@ A modern, modular amateur radio dashboard built with React and Vite. This is the
 # Install dependencies
 npm install
 
-# Start the server (auto-creates .env on first run)
+# Start the server (auto-builds frontend and creates .env on first run)
 npm start
 
 # Edit .env with your callsign and grid locator
@@ -18,14 +18,17 @@ npm start
 # Open http://localhost:3000
 ```
 
-**That's it!** On first run, the server automatically creates a `.env` file from `.env.example`. Just edit it with your callsign and locator.
+**That's it!** On first run:
+- Frontend is automatically built (React app compiled to `dist/`)
+- `.env` file is created from `.env.example`
+- Just edit `.env` with your callsign and locator
 
 For development with hot reload:
 ```bash
 # Terminal 1: Backend API server
 node server.js
 
-# Terminal 2: Frontend dev server
+# Terminal 2: Frontend dev server with hot reload
 npm run dev
 ```
 

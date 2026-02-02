@@ -18,6 +18,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const path = require('path');
 const fetch = require('node-fetch');
 const net = require('net');
@@ -156,7 +157,10 @@ if (configMissing) {
 }
 
 // ITURHFProp service URL (optional - enables hybrid mode)
-const ITURHFPROP_URL = process.env.ITURHFPROP_URL || null;
+// Must be a full URL like https://iturhfprop.example.com
+const ITURHFPROP_URL = process.env.ITURHFPROP_URL && process.env.ITURHFPROP_URL.trim().startsWith('http') 
+  ? process.env.ITURHFPROP_URL.trim() 
+  : null;
 
 // Log configuration
 console.log(`[Config] Station: ${CONFIG.callsign} @ ${CONFIG.gridSquare || 'No grid'}`);
@@ -171,6 +175,49 @@ if (ITURHFPROP_URL) {
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// GZIP compression - reduces response sizes by 70-90%
+// This is critical for reducing bandwidth/egress costs
+app.use(compression({
+  level: 6, // Balanced compression level (1-9)
+  threshold: 1024, // Only compress responses > 1KB
+  filter: (req, res) => {
+    // Compress everything except already-compressed formats
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  }
+}));
+
+// API response caching middleware
+// Sets Cache-Control headers based on endpoint to reduce client polling
+app.use('/api', (req, res, next) => {
+  // Determine cache duration based on endpoint
+  let cacheDuration = 30; // Default: 30 seconds
+  
+  const path = req.path.toLowerCase();
+  
+  if (path.includes('/satellites/tle')) {
+    cacheDuration = 3600; // 1 hour (TLE data is static)
+  } else if (path.includes('/contests') || path.includes('/dxpeditions')) {
+    cacheDuration = 1800; // 30 minutes (contests/expeditions change slowly)
+  } else if (path.includes('/solar-indices') || path.includes('/noaa')) {
+    cacheDuration = 300; // 5 minutes (space weather updates every 5 min)
+  } else if (path.includes('/propagation')) {
+    cacheDuration = 600; // 10 minutes
+  } else if (path.includes('/pota') || path.includes('/sota')) {
+    cacheDuration = 120; // 2 minutes
+  } else if (path.includes('/pskreporter')) {
+    cacheDuration = 300; // 5 minutes (PSKReporter rate limits aggressively)
+  } else if (path.includes('/dxcluster') || path.includes('/myspots')) {
+    cacheDuration = 30; // 30 seconds (DX spots need to be relatively fresh)
+  } else if (path.includes('/config')) {
+    cacheDuration = 3600; // 1 hour (config rarely changes)
+  }
+  
+  res.setHeader('Cache-Control', `public, max-age=${cacheDuration}`);
+  res.setHeader('Vary', 'Accept-Encoding');
+  next();
+});
 
 // ============================================
 // RATE-LIMITED LOGGING
@@ -192,29 +239,69 @@ function logErrorOnce(category, message) {
   return false;
 }
 
-// Serve static files - use 'dist' in production (Vite build), 'public' in development
-const staticDir = process.env.NODE_ENV === 'production' 
-  ? path.join(__dirname, 'dist')
-  : path.join(__dirname, 'public');
-app.use(express.static(staticDir));
+// Serve static files
+// dist/ contains the built React app (from npm run build)
+// public/ contains the fallback page if build hasn't run
+const distDir = path.join(__dirname, 'dist');
+const publicDir = path.join(__dirname, 'public');
 
-// Also serve public folder for any additional assets
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'public')));
+// Check if dist/ exists (has index.html from build)
+const distExists = fs.existsSync(path.join(distDir, 'index.html'));
+
+// Static file caching options
+const staticOptions = {
+  maxAge: '1d', // Cache static files for 1 day
+  etag: true,
+  lastModified: true
+};
+
+// Long-term caching for hashed assets (Vite adds hash to filenames)
+const assetOptions = {
+  maxAge: '1y', // Cache hashed assets for 1 year
+  immutable: true
+};
+
+if (distExists) {
+  // Serve built React app from dist/
+  // Hashed assets (with content hash in filename) can be cached forever
+  app.use('/assets', express.static(path.join(distDir, 'assets'), assetOptions));
+  app.use(express.static(distDir, staticOptions));
+  console.log('[Server] Serving React app from dist/');
+} else {
+  // No build found - serve placeholder from public/
+  console.log('[Server] ⚠️  No build found! Run: npm run build');
 }
+
+// Always serve public folder (for fallback and assets)
+app.use(express.static(publicDir, staticOptions));
 
 // ============================================
 // API PROXY ENDPOINTS
 // ============================================
 
+// Centralized cache for NOAA data (5-minute cache)
+const noaaCache = {
+  flux: { data: null, timestamp: 0 },
+  kindex: { data: null, timestamp: 0 },
+  sunspots: { data: null, timestamp: 0 },
+  xray: { data: null, timestamp: 0 },
+  solarIndices: { data: null, timestamp: 0 }
+};
+const NOAA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 // NOAA Space Weather - Solar Flux
 app.get('/api/noaa/flux', async (req, res) => {
   try {
+    if (noaaCache.flux.data && (Date.now() - noaaCache.flux.timestamp) < NOAA_CACHE_TTL) {
+      return res.json(noaaCache.flux.data);
+    }
     const response = await fetch('https://services.swpc.noaa.gov/json/f107_cm_flux.json');
     const data = await response.json();
+    noaaCache.flux = { data, timestamp: Date.now() };
     res.json(data);
   } catch (error) {
     console.error('NOAA Flux API error:', error.message);
+    if (noaaCache.flux.data) return res.json(noaaCache.flux.data);
     res.status(500).json({ error: 'Failed to fetch solar flux data' });
   }
 });
@@ -222,11 +309,16 @@ app.get('/api/noaa/flux', async (req, res) => {
 // NOAA Space Weather - K-Index
 app.get('/api/noaa/kindex', async (req, res) => {
   try {
+    if (noaaCache.kindex.data && (Date.now() - noaaCache.kindex.timestamp) < NOAA_CACHE_TTL) {
+      return res.json(noaaCache.kindex.data);
+    }
     const response = await fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json');
     const data = await response.json();
+    noaaCache.kindex = { data, timestamp: Date.now() };
     res.json(data);
   } catch (error) {
     console.error('NOAA K-Index API error:', error.message);
+    if (noaaCache.kindex.data) return res.json(noaaCache.kindex.data);
     res.status(500).json({ error: 'Failed to fetch K-index data' });
   }
 });
@@ -234,11 +326,16 @@ app.get('/api/noaa/kindex', async (req, res) => {
 // NOAA Space Weather - Sunspots
 app.get('/api/noaa/sunspots', async (req, res) => {
   try {
+    if (noaaCache.sunspots.data && (Date.now() - noaaCache.sunspots.timestamp) < NOAA_CACHE_TTL) {
+      return res.json(noaaCache.sunspots.data);
+    }
     const response = await fetch('https://services.swpc.noaa.gov/json/solar-cycle/observed-solar-cycle-indices.json');
     const data = await response.json();
+    noaaCache.sunspots = { data, timestamp: Date.now() };
     res.json(data);
   } catch (error) {
     console.error('NOAA Sunspots API error:', error.message);
+    if (noaaCache.sunspots.data) return res.json(noaaCache.sunspots.data);
     res.status(500).json({ error: 'Failed to fetch sunspot data' });
   }
 });
@@ -246,6 +343,11 @@ app.get('/api/noaa/sunspots', async (req, res) => {
 // Solar Indices with History and Kp Forecast
 app.get('/api/solar-indices', async (req, res) => {
   try {
+    // Check cache first
+    if (noaaCache.solarIndices.data && (Date.now() - noaaCache.solarIndices.timestamp) < NOAA_CACHE_TTL) {
+      return res.json(noaaCache.solarIndices.data);
+    }
+    
     const [fluxRes, kIndexRes, kForecastRes, sunspotRes] = await Promise.allSettled([
       fetch('https://services.swpc.noaa.gov/json/f107_cm_flux.json'),
       fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json'),
@@ -314,9 +416,14 @@ app.get('/api/solar-indices', async (req, res) => {
       }
     }
 
+    // Cache the result
+    noaaCache.solarIndices = { data: result, timestamp: Date.now() };
+    
     res.json(result);
   } catch (error) {
     console.error('Solar Indices API error:', error.message);
+    // Return stale cache on error
+    if (noaaCache.solarIndices.data) return res.json(noaaCache.solarIndices.data);
     res.status(500).json({ error: 'Failed to fetch solar indices' });
   }
 });
@@ -573,38 +680,85 @@ app.get('/api/noaa/xray', async (req, res) => {
 });
 
 // POTA Spots
+// POTA cache (2 minutes)
+let potaCache = { data: null, timestamp: 0 };
+const POTA_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
 app.get('/api/pota/spots', async (req, res) => {
   try {
+    // Return cached data if fresh
+    if (potaCache.data && (Date.now() - potaCache.timestamp) < POTA_CACHE_TTL) {
+      return res.json(potaCache.data);
+    }
+    
     const response = await fetch('https://api.pota.app/spot/activator');
     const data = await response.json();
+    
+    // Cache the response
+    potaCache = { data, timestamp: Date.now() };
+    
     res.json(data);
   } catch (error) {
     console.error('POTA API error:', error.message);
+    // Return stale cache on error
+    if (potaCache.data) return res.json(potaCache.data);
     res.status(500).json({ error: 'Failed to fetch POTA spots' });
   }
 });
 
+// SOTA cache (2 minutes)
+let sotaCache = { data: null, timestamp: 0 };
+const SOTA_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
 // SOTA Spots
 app.get('/api/sota/spots', async (req, res) => {
   try {
+    // Return cached data if fresh
+    if (sotaCache.data && (Date.now() - sotaCache.timestamp) < SOTA_CACHE_TTL) {
+      return res.json(sotaCache.data);
+    }
+    
     const response = await fetch('https://api2.sota.org.uk/api/spots/50/all');
     const data = await response.json();
+    
+    // Cache the response
+    sotaCache = { data, timestamp: Date.now() };
+    
     res.json(data);
   } catch (error) {
     console.error('SOTA API error:', error.message);
+    if (sotaCache.data) return res.json(sotaCache.data);
     res.status(500).json({ error: 'Failed to fetch SOTA spots' });
   }
 });
 
+// HamQSL cache (5 minutes)
+let hamqslCache = { data: null, timestamp: 0 };
+const HAMQSL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 // HamQSL Band Conditions
 app.get('/api/hamqsl/conditions', async (req, res) => {
   try {
+    // Return cached data if fresh
+    if (hamqslCache.data && (Date.now() - hamqslCache.timestamp) < HAMQSL_CACHE_TTL) {
+      res.set('Content-Type', 'application/xml');
+      return res.send(hamqslCache.data);
+    }
+    
     const response = await fetch('https://www.hamqsl.com/solarxml.php');
     const text = await response.text();
+    
+    // Cache the response
+    hamqslCache = { data: text, timestamp: Date.now() };
+    
     res.set('Content-Type', 'application/xml');
     res.send(text);
   } catch (error) {
     console.error('HamQSL API error:', error.message);
+    if (hamqslCache.data) {
+      res.set('Content-Type', 'application/xml');
+      return res.send(hamqslCache.data);
+    }
     res.status(500).json({ error: 'Failed to fetch band conditions' });
   }
 });
@@ -1699,6 +1853,295 @@ app.get('/api/myspots/:callsign', async (req, res) => {
 });
 
 // ============================================
+// PSKREPORTER API (MQTT-based for real-time)
+// ============================================
+
+// PSKReporter MQTT feed at mqtt.pskreporter.info provides real-time spots
+// WebSocket endpoints: 1885 (ws), 1886 (wss)
+// Topic format: pskr/filter/v2/{band}/{mode}/{sendercall}/{receivercall}/{senderlocator}/{receiverlocator}/{sendercountry}/{receivercountry}
+
+// Cache for PSKReporter data - stores recent spots from MQTT
+const pskReporterSpots = {
+  tx: new Map(), // Map of callsign -> spots where they're being heard
+  rx: new Map(), // Map of callsign -> spots they're receiving
+  maxAge: 60 * 60 * 1000 // Keep spots for 1 hour max
+};
+
+// Clean up old spots periodically
+setInterval(() => {
+  const cutoff = Date.now() - pskReporterSpots.maxAge;
+  for (const [call, spots] of pskReporterSpots.tx) {
+    const filtered = spots.filter(s => s.timestamp > cutoff);
+    if (filtered.length === 0) {
+      pskReporterSpots.tx.delete(call);
+    } else {
+      pskReporterSpots.tx.set(call, filtered);
+    }
+  }
+  for (const [call, spots] of pskReporterSpots.rx) {
+    const filtered = spots.filter(s => s.timestamp > cutoff);
+    if (filtered.length === 0) {
+      pskReporterSpots.rx.delete(call);
+    } else {
+      pskReporterSpots.rx.set(call, filtered);
+    }
+  }
+}, 5 * 60 * 1000); // Clean every 5 minutes
+
+// Convert grid square to lat/lon
+function gridToLatLonSimple(grid) {
+  if (!grid || grid.length < 4) return null;
+  
+  const g = grid.toUpperCase();
+  const lon = (g.charCodeAt(0) - 65) * 20 - 180;
+  const lat = (g.charCodeAt(1) - 65) * 10 - 90;
+  const lonMin = parseInt(g[2]) * 2;
+  const latMin = parseInt(g[3]) * 1;
+  
+  let finalLon = lon + lonMin + 1;
+  let finalLat = lat + latMin + 0.5;
+  
+  // If 6-character grid, add more precision
+  if (grid.length >= 6) {
+    const lonSec = (g.charCodeAt(4) - 65) * (2/24);
+    const latSec = (g.charCodeAt(5) - 65) * (1/24);
+    finalLon = lon + lonMin + lonSec + (1/24);
+    finalLat = lat + latMin + latSec + (0.5/24);
+  }
+  
+  return { lat: finalLat, lon: finalLon };
+}
+
+// Get band name from frequency in Hz
+function getBandFromHz(freqHz) {
+  const freq = freqHz / 1000000; // Convert to MHz
+  if (freq >= 1.8 && freq <= 2) return '160m';
+  if (freq >= 3.5 && freq <= 4) return '80m';
+  if (freq >= 5.3 && freq <= 5.4) return '60m';
+  if (freq >= 7 && freq <= 7.3) return '40m';
+  if (freq >= 10.1 && freq <= 10.15) return '30m';
+  if (freq >= 14 && freq <= 14.35) return '20m';
+  if (freq >= 18.068 && freq <= 18.168) return '17m';
+  if (freq >= 21 && freq <= 21.45) return '15m';
+  if (freq >= 24.89 && freq <= 24.99) return '12m';
+  if (freq >= 28 && freq <= 29.7) return '10m';
+  if (freq >= 50 && freq <= 54) return '6m';
+  if (freq >= 144 && freq <= 148) return '2m';
+  if (freq >= 420 && freq <= 450) return '70cm';
+  return 'Unknown';
+}
+
+// PSKReporter endpoint - returns MQTT connection info for frontend
+// The frontend connects directly to MQTT via WebSocket for real-time updates
+app.get('/api/pskreporter/config', (req, res) => {
+  res.json({
+    mqtt: {
+      host: 'mqtt.pskreporter.info',
+      wsPort: 1885,      // WebSocket
+      wssPort: 1886,     // WebSocket + TLS (recommended)
+      topicPrefix: 'pskr/filter/v2'
+    },
+    // Topic format: pskr/filter/v2/{band}/{mode}/{sendercall}/{receivercall}/{senderlocator}/{receiverlocator}/{sendercountry}/{receivercountry}
+    // Use + for single-level wildcard, # for multi-level
+    // Example for TX (being heard): pskr/filter/v2/+/+/{CALLSIGN}/#
+    // Example for RX (hearing): Subscribe and filter client-side
+    info: 'Connect via WebSocket to mqtt.pskreporter.info:1886 (wss) for real-time spots'
+  });
+});
+
+// Fallback HTTP endpoint for when MQTT isn't available
+// Uses the traditional retrieve API with caching
+let pskHttpCache = {};
+const PSK_HTTP_CACHE_TTL = 10 * 60 * 1000; // 10 minutes - PSKReporter rate limits aggressively
+let psk503Backoff = 0; // Timestamp when we can try again after 503
+
+app.get('/api/pskreporter/http/:callsign', async (req, res) => {
+  const callsign = req.params.callsign.toUpperCase();
+  const minutes = parseInt(req.query.minutes) || 15;
+  const direction = req.query.direction || 'tx'; // tx or rx
+  // flowStartSeconds must be NEGATIVE for "last N seconds"
+  const flowStartSeconds = -Math.abs(minutes * 60);
+  
+  const cacheKey = `${direction}:${callsign}:${minutes}`;
+  const now = Date.now();
+  
+  // Check cache first
+  if (pskHttpCache[cacheKey] && (now - pskHttpCache[cacheKey].timestamp) < PSK_HTTP_CACHE_TTL) {
+    return res.json({ ...pskHttpCache[cacheKey].data, cached: true });
+  }
+  
+  // If we're in 503 backoff period, return cached data or empty result
+  if (psk503Backoff > now) {
+    console.log(`[PSKReporter HTTP] In backoff period, ${Math.round((psk503Backoff - now) / 1000)}s remaining`);
+    if (pskHttpCache[cacheKey]) {
+      return res.json({ ...pskHttpCache[cacheKey].data, cached: true, stale: true });
+    }
+    return res.json({ 
+      callsign, 
+      direction, 
+      count: 0, 
+      reports: [],
+      backoff: true
+    });
+  }
+  
+  try {
+    const param = direction === 'tx' ? 'senderCallsign' : 'receiverCallsign';
+    // Add appcontact parameter as requested by PSKReporter developer docs
+    const url = `https://retrieve.pskreporter.info/query?${param}=${encodeURIComponent(callsign)}&flowStartSeconds=${flowStartSeconds}&rronly=1&appcontact=openhamclock`;
+    
+    console.log(`[PSKReporter HTTP] Fetching ${direction} for ${callsign} (last ${minutes} min)`);
+    
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    
+    const response = await fetch(url, {
+      headers: { 
+        'User-Agent': 'OpenHamClock/3.11 (Amateur Radio Dashboard)',
+        'Accept': '*/*'
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    
+    if (!response.ok) {
+      // On 503, set backoff period (15 minutes) to avoid hammering
+      if (response.status === 503) {
+        psk503Backoff = Date.now() + (15 * 60 * 1000);
+        console.log(`[PSKReporter HTTP] Got 503, backing off for 15 minutes`);
+      }
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const xml = await response.text();
+    const reports = [];
+    
+    // Parse XML response
+    const reportRegex = /<receptionReport[^>]*>/g;
+    let match;
+    while ((match = reportRegex.exec(xml)) !== null) {
+      const report = match[0];
+      const getAttr = (name) => {
+        const m = report.match(new RegExp(`${name}="([^"]*)"`));
+        return m ? m[1] : null;
+      };
+      
+      const receiverCallsign = getAttr('receiverCallsign');
+      const receiverLocator = getAttr('receiverLocator');
+      const senderCallsign = getAttr('senderCallsign');
+      const senderLocator = getAttr('senderLocator');
+      const frequency = getAttr('frequency');
+      const mode = getAttr('mode');
+      const flowStartSecs = getAttr('flowStartSeconds');
+      const sNR = getAttr('sNR');
+      
+      if (receiverCallsign && senderCallsign) {
+        const locator = direction === 'tx' ? receiverLocator : senderLocator;
+        const loc = locator ? gridToLatLonSimple(locator) : null;
+        
+        reports.push({
+          sender: senderCallsign,
+          senderGrid: senderLocator,
+          receiver: receiverCallsign,
+          receiverGrid: receiverLocator,
+          freq: frequency ? parseInt(frequency) : null,
+          freqMHz: frequency ? (parseInt(frequency) / 1000000).toFixed(3) : null,
+          band: frequency ? getBandFromHz(parseInt(frequency)) : 'Unknown',
+          mode: mode || 'Unknown',
+          timestamp: flowStartSecs ? parseInt(flowStartSecs) * 1000 : Date.now(),
+          snr: sNR ? parseInt(sNR) : null,
+          lat: loc?.lat,
+          lon: loc?.lon,
+          age: flowStartSecs ? Math.floor((Date.now() / 1000 - parseInt(flowStartSecs)) / 60) : 0
+        });
+      }
+    }
+    
+    // Sort by timestamp (newest first)
+    reports.sort((a, b) => b.timestamp - a.timestamp);
+    
+    // Clear backoff on success
+    psk503Backoff = 0;
+    
+    const result = {
+      callsign,
+      direction,
+      count: reports.length,
+      reports: reports.slice(0, 100),
+      timestamp: new Date().toISOString(),
+      source: 'http'
+    };
+    
+    // Cache it
+    pskHttpCache[cacheKey] = { data: result, timestamp: now };
+    
+    console.log(`[PSKReporter HTTP] Found ${reports.length} ${direction} reports for ${callsign}`);
+    res.json(result);
+    
+  } catch (error) {
+    logErrorOnce('PSKReporter HTTP', error.message);
+    
+    // Return cached data if available (without error flag)
+    if (pskHttpCache[cacheKey]) {
+      return res.json({ ...pskHttpCache[cacheKey].data, cached: true, stale: true });
+    }
+    
+    // Return empty result without error flag for 503s (rate limiting is expected)
+    res.json({ 
+      callsign, 
+      direction, 
+      count: 0, 
+      reports: []
+    });
+  }
+});
+
+// Combined endpoint that tries MQTT cache first, falls back to HTTP
+app.get('/api/pskreporter/:callsign', async (req, res) => {
+  const callsign = req.params.callsign.toUpperCase();
+  const minutes = parseInt(req.query.minutes) || 15;
+  
+  // For now, redirect to HTTP endpoint since MQTT requires client-side connection
+  // The frontend should connect directly to MQTT for real-time updates
+  try {
+    const [txRes, rxRes] = await Promise.allSettled([
+      fetch(`http://localhost:${PORT}/api/pskreporter/http/${callsign}?minutes=${minutes}&direction=tx`),
+      fetch(`http://localhost:${PORT}/api/pskreporter/http/${callsign}?minutes=${minutes}&direction=rx`)
+    ]);
+    
+    let txData = { count: 0, reports: [] };
+    let rxData = { count: 0, reports: [] };
+    
+    if (txRes.status === 'fulfilled' && txRes.value.ok) {
+      txData = await txRes.value.json();
+    }
+    if (rxRes.status === 'fulfilled' && rxRes.value.ok) {
+      rxData = await rxRes.value.json();
+    }
+    
+    res.json({
+      callsign,
+      tx: txData,
+      rx: rxData,
+      timestamp: new Date().toISOString(),
+      mqtt: {
+        available: true,
+        host: 'wss://mqtt.pskreporter.info:1886',
+        hint: 'Connect via WebSocket for real-time updates'
+      }
+    });
+    
+  } catch (error) {
+    logErrorOnce('PSKReporter', error.message);
+    res.json({ 
+      callsign, 
+      tx: { count: 0, reports: [] }, 
+      rx: { count: 0, reports: [] }, 
+      error: error.message 
+    });
+  }
+});
+// ============================================
 // SATELLITE TRACKING API
 // ============================================
 
@@ -1770,16 +2213,15 @@ let tleCache = { data: null, timestamp: 0 };
 const TLE_CACHE_DURATION = 6 * 60 * 60 * 1000; // 6 hours
 
 app.get('/api/satellites/tle', async (req, res) => {
-  console.log('[Satellites] Fetching TLE data...');
-  
   try {
     const now = Date.now();
     
     // Return cached data if fresh
     if (tleCache.data && (now - tleCache.timestamp) < TLE_CACHE_DURATION) {
-      console.log('[Satellites] Returning cached TLE data');
       return res.json(tleCache.data);
     }
+    
+    console.log('[Satellites] Fetching fresh TLE data...');
     
     // Fetch fresh TLE data from CelesTrak
     const tleData = {};
@@ -1819,7 +2261,6 @@ app.get('/api/satellites/tle', async (req, res) => {
                 tle1: line1,
                 tle2: line2
               };
-              console.log('[Satellites] Found TLE for:', key, noradId);
             }
           }
         }
@@ -1829,10 +2270,18 @@ app.get('/api/satellites/tle', async (req, res) => {
     // Also try to get ISS specifically (it's in the stations group)
     if (!tleData['ISS']) {
       try {
+        const issController = new AbortController();
+        const issTimeout = setTimeout(() => issController.abort(), 10000);
+        
         const issResponse = await fetch(
           'https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=tle',
-          { headers: { 'User-Agent': 'OpenHamClock/3.3' } }
+          { 
+            headers: { 'User-Agent': 'OpenHamClock/3.3' },
+            signal: issController.signal
+          }
         );
+        clearTimeout(issTimeout);
+        
         if (issResponse.ok) {
           const issText = await issResponse.text();
           const issLines = issText.trim().split('\n');
@@ -1846,7 +2295,9 @@ app.get('/api/satellites/tle', async (req, res) => {
           }
         }
       } catch (e) {
-        console.log('[Satellites] Could not fetch ISS TLE:', e.message);
+        if (e.name !== 'AbortError') {
+          logErrorOnce('Satellites', `ISS TLE fetch: ${e.message}`);
+        }
       }
     }
     
@@ -1857,7 +2308,10 @@ app.get('/api/satellites/tle', async (req, res) => {
     res.json(tleData);
     
   } catch (error) {
-    console.error('[Satellites] TLE fetch error:', error.message);
+    // Don't spam logs for timeouts (AbortError) or network issues
+    if (error.name !== 'AbortError') {
+      logErrorOnce('Satellites', `TLE fetch error: ${error.message}`);
+    }
     // Return cached data even if stale, or empty object
     res.json(tleCache.data || {});
   }
@@ -3083,9 +3537,11 @@ app.get('/api/config', (req, res) => {
 // ============================================
 
 app.get('*', (req, res) => {
-  const indexPath = process.env.NODE_ENV === 'production'
-    ? path.join(__dirname, 'dist', 'index.html')
-    : path.join(__dirname, 'public', 'index.html');
+  // Try dist first (built React app), fallback to public (monolithic)
+  const distIndex = path.join(__dirname, 'dist', 'index.html');
+  const publicIndex = path.join(__dirname, 'public', 'index.html');
+  
+  const indexPath = fs.existsSync(distIndex) ? distIndex : publicIndex;
   res.sendFile(indexPath);
 });
 

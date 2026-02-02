@@ -13,6 +13,8 @@ export { ContestPanel } from './ContestPanel.jsx';
 export { LocationPanel } from './LocationPanel.jsx';
 export { SettingsPanel } from './SettingsPanel.jsx';
 export { DXFilterManager } from './DXFilterManager.jsx';
+export { PSKFilterManager } from './PSKFilterManager.jsx';
 export { SolarPanel } from './SolarPanel.jsx';
 export { PropagationPanel } from './PropagationPanel.jsx';
 export { DXpeditionPanel } from './DXpeditionPanel.jsx';
+export { PSKReporterPanel } from './PSKReporterPanel.jsx';
