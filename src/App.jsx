@@ -15,7 +15,8 @@ import {
   DXFilterManager,
   SolarPanel,
   PropagationPanel,
-  DXpeditionPanel
+  DXpeditionPanel,
+  PSKReporterPanel
 } from './components';
 
 // Hooks
@@ -31,7 +32,8 @@ import {
   useMySpots,
   useDXpeditions,
   useSatellites,
-  useSolarIndices
+  useSolarIndices,
+  usePSKReporter
 } from './hooks';
 
 // Utils
@@ -100,9 +102,9 @@ const App = () => {
   const [mapLayers, setMapLayers] = useState(() => {
     try {
       const stored = localStorage.getItem('openhamclock_mapLayers');
-      const defaults = { showDXPaths: true, showDXLabels: true, showPOTA: true, showSatellites: false };
+      const defaults = { showDXPaths: true, showDXLabels: true, showPOTA: true, showSatellites: false, showPSKReporter: true };
       return stored ? { ...defaults, ...JSON.parse(stored) } : defaults;
-    } catch (e) { return { showDXPaths: true, showDXLabels: true, showPOTA: true, showSatellites: false }; }
+    } catch (e) { return { showDXPaths: true, showDXLabels: true, showPOTA: true, showSatellites: false, showPSKReporter: true }; }
   });
   
   useEffect(() => {
@@ -117,6 +119,7 @@ const App = () => {
   const toggleDXLabels = useCallback(() => setMapLayers(prev => ({ ...prev, showDXLabels: !prev.showDXLabels })), []);
   const togglePOTA = useCallback(() => setMapLayers(prev => ({ ...prev, showPOTA: !prev.showPOTA })), []);
   const toggleSatellites = useCallback(() => setMapLayers(prev => ({ ...prev, showSatellites: !prev.showSatellites })), []);
+  const togglePSKReporter = useCallback(() => setMapLayers(prev => ({ ...prev, showPSKReporter: !prev.showPSKReporter })), []);
   
   // 12/24 hour format
   const [use12Hour, setUse12Hour] = useState(() => {
@@ -188,6 +191,7 @@ const App = () => {
   const mySpots = useMySpots(config.callsign);
   const satellites = useSatellites(config.location);
   const localWeather = useLocalWeather(config.location);
+  const pskReporter = usePSKReporter(config.callsign, { minutes: 15, enabled: config.callsign !== 'N0CALL' });
 
   // Computed values
   const deGrid = useMemo(() => calculateGridSquare(config.location.lat, config.location.lon), [config.location]);
@@ -457,11 +461,13 @@ const App = () => {
                 dxPaths={dxPaths.data}
                 dxFilters={dxFilters}
                 satellites={satellites.data}
+                pskReporterSpots={[...(pskReporter.txReports || []), ...(pskReporter.rxReports || [])]}
                 showDXPaths={mapLayers.showDXPaths}
                 showDXLabels={mapLayers.showDXLabels}
                 onToggleDXLabels={toggleDXLabels}
                 showPOTA={mapLayers.showPOTA}
                 showSatellites={mapLayers.showSatellites}
+                showPSKReporter={mapLayers.showPSKReporter}
                 onToggleSatellites={toggleSatellites}
                 hoveredSpot={hoveredSpot}
               />
@@ -593,11 +599,13 @@ const App = () => {
             dxPaths={dxPaths.data}
             dxFilters={dxFilters}
             satellites={satellites.data}
+            pskReporterSpots={[...(pskReporter.txReports || []), ...(pskReporter.rxReports || [])]}
             showDXPaths={mapLayers.showDXPaths}
             showDXLabels={mapLayers.showDXLabels}
             onToggleDXLabels={toggleDXLabels}
             showPOTA={mapLayers.showPOTA}
             showSatellites={mapLayers.showSatellites}
+            showPSKReporter={mapLayers.showPSKReporter}
             onToggleSatellites={toggleSatellites}
             hoveredSpot={hoveredSpot}
           />
@@ -617,9 +625,9 @@ const App = () => {
         </div>
         
         {/* RIGHT SIDEBAR */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', overflow: 'hidden' }}>
-          {/* DX Cluster - takes most space */}
-          <div style={{ flex: '2 1 0', minHeight: '250px', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden' }}>
+          {/* DX Cluster - primary panel, takes most space */}
+          <div style={{ flex: '2 1 auto', minHeight: '180px', overflow: 'hidden' }}>
             <DXClusterPanel
               data={dxCluster.data}
               loading={dxCluster.loading}
@@ -634,13 +642,27 @@ const App = () => {
             />
           </div>
           
-          {/* DXpeditions - smaller */}
-          <div style={{ flex: '0 0 auto', maxHeight: '140px', overflow: 'hidden' }}>
+          {/* PSKReporter - digital mode spots */}
+          <div style={{ flex: '1 1 auto', minHeight: '140px', overflow: 'hidden' }}>
+            <PSKReporterPanel 
+              callsign={config.callsign}
+              showOnMap={mapLayers.showPSKReporter}
+              onToggleMap={togglePSKReporter}
+              onShowOnMap={(report) => {
+                if (report.lat && report.lon) {
+                  setDxLocation({ lat: report.lat, lon: report.lon, call: report.receiver || report.sender });
+                }
+              }}
+            />
+          </div>
+          
+          {/* DXpeditions */}
+          <div style={{ flex: '0 0 auto', minHeight: '70px', maxHeight: '100px', overflow: 'hidden' }}>
             <DXpeditionPanel data={dxpeditions.data} loading={dxpeditions.loading} />
           </div>
           
-          {/* POTA - smaller */}
-          <div style={{ flex: '0 0 auto', maxHeight: '120px', overflow: 'hidden' }}>
+          {/* POTA */}
+          <div style={{ flex: '0 0 auto', minHeight: '60px', maxHeight: '90px', overflow: 'hidden' }}>
             <POTAPanel 
               data={potaSpots.data} 
               loading={potaSpots.loading} 
@@ -649,8 +671,8 @@ const App = () => {
             />
           </div>
           
-          {/* Contests - smaller */}
-          <div style={{ flex: '0 0 auto', maxHeight: '150px', overflow: 'hidden' }}>
+          {/* Contests - at bottom, compact */}
+          <div style={{ flex: '0 0 auto', minHeight: '80px', maxHeight: '120px', overflow: 'hidden' }}>
             <ContestPanel data={contests.data} loading={contests.loading} />
           </div>
         </div>
