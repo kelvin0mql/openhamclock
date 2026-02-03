@@ -2513,6 +2513,167 @@ app.get('/api/wspr/heatmap', async (req, res) => {
 });
 
 // ============================================
+// REVERSE BEACON NETWORK (RBN) API
+// ============================================
+
+// RBN data cache (2 minute TTL per callsign)
+const rbnCache = new Map(); // callsign -> { data, timestamp }
+const RBN_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+// RBN Telnet connection cache (reuse connections)
+const rbnConnections = new Map(); // port -> { socket, buffer, subscribers }
+
+/**
+ * Connect to RBN Telnet and get real-time spots for a callsign
+ * @param {string} callsign - The callsign to filter for
+ * @param {number} minutes - Time window in minutes (default 60)
+ * @param {number} port - Telnet port (7000 for CW/RTTY, 7001 for FT8)
+ */
+function fetchRBNSpots(callsign, minutes = 60, port = 7000) {
+  return new Promise((resolve, reject) => {
+    const spots = [];
+    const cutoffTime = Date.now() - (minutes * 60 * 1000);
+    let dataBuffer = '';
+    
+    const client = net.createConnection({ 
+      host: 'telnet.reversebeacon.net', 
+      port: port 
+    }, () => {
+      console.log(`[RBN] Connected to telnet.reversebeacon.net:${port}`);
+    });
+
+    client.setTimeout(15000); // 15 second timeout
+    
+    client.on('data', (data) => {
+      dataBuffer += data.toString('utf8');
+      const lines = dataBuffer.split('\n');
+      dataBuffer = lines.pop(); // Keep incomplete line in buffer
+      
+      for (const line of lines) {
+        // Parse RBN spot line format:
+        // DX de W3LPL-#:     7003.0  K3LR           CW    30 dB  23 WPM  CQ      0123Z
+        const spotMatch = line.match(/DX de\s+(\S+)\s*:\s*([\d.]+)\s+(\S+)\s+(\S+)\s+([-\d]+)\s+dB/);
+        
+        if (spotMatch) {
+          const [, skimmer, freq, dx, mode, snr] = spotMatch;
+          
+          // Filter by callsign (case-insensitive)
+          if (callsign && dx.toUpperCase() !== callsign.toUpperCase()) {
+            continue;
+          }
+          
+          const timestamp = Date.now();
+          const freqNum = parseFloat(freq) * 1000; // Convert to Hz
+          const band = getBandFromHz(freqNum);
+          
+          spots.push({
+            skimmer: skimmer.replace(/-#.*$/, ''), // Remove -# suffix
+            skimmerFull: skimmer,
+            dx: dx,
+            freq: freqNum,
+            freqMHz: parseFloat(freq),
+            band: band,
+            mode: mode,
+            snr: parseInt(snr),
+            timestamp: timestamp,
+            age: 0,
+            source: 'rbn',
+            line: line.trim()
+          });
+        }
+      }
+    });
+
+    client.on('timeout', () => {
+      console.log(`[RBN] Timeout after 15s, closing connection`);
+      client.destroy();
+      resolve(spots);
+    });
+
+    client.on('error', (err) => {
+      console.error(`[RBN] Connection error: ${err.message}`);
+      reject(err);
+    });
+
+    client.on('close', () => {
+      console.log(`[RBN] Connection closed, collected ${spots.length} spots`);
+      resolve(spots);
+    });
+
+    // Wait 10 seconds to collect spots, then close
+    setTimeout(() => {
+      client.destroy();
+    }, 10000);
+  });
+}
+
+/**
+ * RBN API endpoint
+ * GET /api/rbn?callsign=VE3TOS&minutes=60&port=7000
+ */
+app.get('/api/rbn', async (req, res) => {
+  const callsign = (req.query.callsign || '').trim().toUpperCase();
+  const minutes = parseInt(req.query.minutes) || 60;
+  const port = parseInt(req.query.port) || 7000; // 7000=CW/RTTY, 7001=FT8
+  
+  if (!callsign || callsign === 'N0CALL') {
+    return res.json({
+      callsign: callsign || 'N0CALL',
+      count: 0,
+      spots: [],
+      error: 'Valid callsign required'
+    });
+  }
+  
+  const now = Date.now();
+  const cacheKey = `${callsign}:${port}`;
+  
+  // Check cache
+  const cached = rbnCache.get(cacheKey);
+  if (cached && (now - cached.timestamp) < RBN_CACHE_TTL) {
+    return res.json({ ...cached.data, cached: true });
+  }
+  
+  try {
+    console.log(`[RBN] Fetching spots for ${callsign} (last ${minutes} min, port ${port})`);
+    const spots = await fetchRBNSpots(callsign, minutes, port);
+    
+    // Add grid square and lat/lon for each skimmer (if we have callbook data)
+    // For now, we'll return spots without coordinates - frontend can look them up
+    
+    const result = {
+      callsign: callsign,
+      count: spots.length,
+      spots: spots,
+      minutes: minutes,
+      port: port,
+      timestamp: new Date().toISOString(),
+      source: 'rbn-telnet'
+    };
+    
+    // Cache the result
+    rbnCache.set(cacheKey, { data: result, timestamp: now });
+    
+    res.json(result);
+    
+  } catch (error) {
+    console.error(`[RBN] Error fetching spots: ${error.message}`);
+    
+    // Return cached data if available (even if stale)
+    if (cached) {
+      return res.json({ ...cached.data, cached: true, stale: true });
+    }
+    
+    res.json({
+      callsign: callsign,
+      count: 0,
+      spots: [],
+      error: error.message
+    });
+  }
+});
+
+// ============================================
 // SATELLITE TRACKING API
 // ============================================
 

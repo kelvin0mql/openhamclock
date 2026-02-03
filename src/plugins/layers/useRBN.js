@@ -168,26 +168,29 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign 
       }
       
       const data = await response.json();
-      console.log(`[RBN] Received ${data.length || 0} spots`);
+      console.log(`[RBN] Received ${data.count || 0} spots for ${callsign}`);
       
-      if (data && Array.isArray(data)) {
+      if (data && data.spots && Array.isArray(data.spots)) {
         const now = Date.now();
         const cutoff = now - (timeWindow * 60 * 1000);
         
-        // Filter by time window
-        const recentSpots = data.filter(spot => {
-          const spotTime = new Date(spot.timestamp || spot.time).getTime();
-          return spotTime > cutoff;
+        // Filter by time window and SNR threshold
+        const recentSpots = data.spots.filter(spot => {
+          const spotTime = spot.timestamp || now;
+          const meetsTime = spotTime > cutoff;
+          const meetsFilter = selectedBand === 'all' || spot.band === selectedBand;
+          const meetsSNR = (spot.snr || 0) >= minSNR;
+          return meetsTime && meetsFilter && meetsSNR;
         });
         
         setSpots(recentSpots);
         
         // Calculate statistics
         const validSNRs = recentSpots
-          .map(s => s.snr || s.db)
+          .map(s => s.snr)
           .filter(snr => snr !== null && snr !== undefined);
         
-        const uniqueSkimmers = new Set(recentSpots.map(s => s.callsign || s.de));
+        const uniqueSkimmers = new Set(recentSpots.map(s => s.skimmer));
         
         setStats({
           total: recentSpots.length,
@@ -248,17 +251,22 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign 
 
     // Render each spot
     filteredSpots.forEach(spot => {
+      // RBN Telnet API returns: { skimmer, dx, freq, freqMHz, band, mode, snr, timestamp }
+      // We need to look up the skimmer's grid square - for now skip spots without coordinates
       const skimmerGrid = spot.grid || spot.de_grid;
-      if (!skimmerGrid) return;
+      if (!skimmerGrid) {
+        console.warn(`[RBN] No grid square for skimmer ${spot.skimmer || 'unknown'}`);
+        return;
+      }
 
       const skimmerLoc = gridToLatLon(skimmerGrid);
       if (!skimmerLoc) return;
 
-      const snr = spot.snr || spot.db || 0;
-      const freq = spot.frequency || spot.freq || 0;
-      const band = freqToBand(freq);
-      const skimmerCall = spot.callsign || spot.de || 'Unknown';
-      const timestamp = new Date(spot.timestamp || spot.time);
+      const snr = spot.snr || 0;
+      const freq = spot.freq || (spot.freqMHz ? spot.freqMHz * 1000000 : 0);
+      const band = spot.band || freqToBand(freq);
+      const skimmerCall = spot.skimmer || spot.callsign || 'Unknown';
+      const timestamp = new Date(spot.timestamp);
 
       // Create path line if enabled
       if (showPaths) {
