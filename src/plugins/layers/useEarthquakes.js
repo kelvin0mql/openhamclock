@@ -119,14 +119,14 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
             if (circle._path) {
               circle._path.classList.add('earthquake-pulse-new');
               
-              // Remove animation class after it completes (0.6s)
+              // Remove animation class after it completes (0.8s)
               setTimeout(() => {
                 try {
                   if (circle._path) {
                     circle._path.classList.remove('earthquake-pulse-new');
                   }
                 } catch (e) {}
-              }, 600);
+              }, 800);
             }
           } catch (e) {
             console.warn('Could not animate earthquake marker:', e);

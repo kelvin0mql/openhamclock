@@ -739,7 +739,7 @@ body::before {
    EARTHQUAKE PLUGIN ANIMATIONS
    ============================================ */
 
-/* New earthquake pulse animation */
+/* New earthquake pulse animation - ring only */
 @keyframes earthquake-pulse {
   0% {
     transform: scale(0);
@@ -760,24 +760,28 @@ body::before {
   animation: earthquake-pulse 3s ease-out;
 }
 
-/* Growing dot animation for new earthquakes */
-@keyframes earthquake-grow {
+/* Flash/fade animation for new earthquakes - no transform */
+@keyframes earthquake-flash {
   0% {
-    transform: scale(0);
     opacity: 0;
+    filter: brightness(3) drop-shadow(0 0 8px currentColor);
   }
-  50% {
-    transform: scale(1.5);
+  30% {
     opacity: 1;
+    filter: brightness(2) drop-shadow(0 0 6px currentColor);
+  }
+  60% {
+    opacity: 1;
+    filter: brightness(1.5) drop-shadow(0 0 4px currentColor);
   }
   100% {
-    transform: scale(1);
     opacity: 1;
+    filter: brightness(1) drop-shadow(0 0 0px transparent);
   }
 }
 
 .earthquake-pulse-new {
-  animation: earthquake-grow 0.6s ease-out;
+  animation: earthquake-flash 0.8s ease-out;
 }
 
 /* No animation for regular earthquake markers */
@@ -806,27 +810,23 @@ body::before {
   animation: lightning-pulse 2s ease-out;
 }
 
-/* Flash animation for new lightning strikes */
+/* Flash animation for new lightning strikes - no transform */
 @keyframes lightning-flash {
   0% {
-    transform: scale(0);
     opacity: 0;
-    filter: brightness(2);
+    filter: brightness(3) drop-shadow(0 0 10px gold);
   }
-  30% {
-    transform: scale(1.8);
+  20% {
     opacity: 1;
-    filter: brightness(3);
+    filter: brightness(4) drop-shadow(0 0 12px gold);
   }
-  60% {
-    transform: scale(1.2);
-    opacity: 0.8;
-    filter: brightness(1.5);
+  50% {
+    opacity: 1;
+    filter: brightness(2.5) drop-shadow(0 0 8px gold);
   }
   100% {
-    transform: scale(1);
     opacity: 1;
-    filter: brightness(1);
+    filter: brightness(1) drop-shadow(0 0 0px transparent);
   }
 }
 
