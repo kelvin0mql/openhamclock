@@ -973,6 +973,14 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null }) {
   // Cleanup controls on disable - FIX: properly remove all controls and layers
   useEffect(() => {
     if (!enabled && map) {
+      // Only log once and check if controls actually exist before attempting removal
+      const hasControls = filterControlRef.current || legendControlRef.current || 
+                          statsControlRef.current || chartControlRef.current;
+      
+      if (!hasControls) {
+        return; // Nothing to clean up
+      }
+      
       console.log('[WSPR] Plugin disabled - cleaning up all controls and layers');
       
       // Remove filter control

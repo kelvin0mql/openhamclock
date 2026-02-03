@@ -112,6 +112,7 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
         iconAnchor: [size/2, size/2]
       });
       
+      console.log('Creating earthquake marker:', quakeId, 'at', lat, lon, 'size:', size, 'color:', color);
       const circle = L.marker([lat, lon], { icon, opacity });
 
       // Add to map first
