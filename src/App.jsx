@@ -100,6 +100,9 @@ const App = () => {
   const [showDXFilters, setShowDXFilters] = useState(false);
   const [showPSKFilters, setShowPSKFilters] = useState(false);
   const [weatherExpanded, setWeatherExpanded] = useState(false);
+  const [tempUnit, setTempUnit] = useState(() => {
+    try { return localStorage.getItem('openhamclock_tempUnit') || 'F'; } catch { return 'F'; }
+  });
   const [isFullscreen, setIsFullscreen] = useState(false);
   
   // Map layer visibility
@@ -209,7 +212,7 @@ const App = () => {
   const propagation = usePropagation(config.location, dxLocation);
   const mySpots = useMySpots(config.callsign);
   const satellites = useSatellites(config.location);
-  const localWeather = useLocalWeather(config.location);
+  const localWeather = useLocalWeather(config.location, tempUnit);
   const pskReporter = usePSKReporter(config.callsign, { minutes: 15, enabled: config.callsign !== 'N0CALL' });
   const wsjtx = useWSJTX();
 
@@ -615,29 +618,60 @@ const App = () => {
             </div>
             
             {/* Local Weather — compact by default, click to expand */}
-            {localWeather.data && (
+            {localWeather.data && (() => {
+              const w = localWeather.data;
+              const deg = `°${w.tempUnit || tempUnit}`;
+              const wind = w.windUnit || 'mph';
+              const vis = w.visUnit || 'mi';
+              return (
               <div style={{ marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
                 {/* Compact summary row — always visible */}
-                <div 
-                  onClick={() => setWeatherExpanded(!weatherExpanded)}
-                  style={{ 
-                    display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
-                    userSelect: 'none', padding: '2px 0',
-                  }}
-                >
-                  <span style={{ fontSize: '20px', lineHeight: 1 }}>{localWeather.data.icon}</span>
-                  <span style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'Orbitron, monospace' }}>
-                    {localWeather.data.temp}°F
-                  </span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)', flex: 1 }}>{localWeather.data.description}</span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
-                    💨{localWeather.data.windSpeed}
-                  </span>
-                  <span style={{ 
-                    fontSize: '10px', color: 'var(--text-muted)', 
-                    transform: weatherExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                    transition: 'transform 0.2s',
-                  }}>▼</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div 
+                    onClick={() => setWeatherExpanded(!weatherExpanded)}
+                    style={{ 
+                      display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
+                      userSelect: 'none', flex: 1, minWidth: 0,
+                    }}
+                  >
+                    <span style={{ fontSize: '20px', lineHeight: 1 }}>{w.icon}</span>
+                    <span style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'Orbitron, monospace' }}>
+                      {w.temp}{deg}
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.description}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
+                      💨{w.windSpeed}
+                    </span>
+                    <span style={{ 
+                      fontSize: '10px', color: 'var(--text-muted)', 
+                      transform: weatherExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.2s',
+                    }}>▼</span>
+                  </div>
+                  {/* F/C toggle */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const next = tempUnit === 'F' ? 'C' : 'F';
+                      setTempUnit(next);
+                      try { localStorage.setItem('openhamclock_tempUnit', next); } catch {}
+                    }}
+                    style={{
+                      background: 'var(--bg-tertiary)',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--text-secondary)',
+                      fontSize: '10px',
+                      padding: '1px 5px',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                      fontFamily: 'JetBrains Mono, monospace',
+                      fontWeight: '600',
+                      flexShrink: 0,
+                    }}
+                    title={`Switch to °${tempUnit === 'F' ? 'C' : 'F'}`}
+                  >
+                    °{tempUnit === 'F' ? 'C' : 'F'}
+                  </button>
                 </div>
                 
                 {/* Expanded details */}
@@ -645,14 +679,14 @@ const App = () => {
                   <div style={{ marginTop: '10px' }}>
                     {/* Feels like + hi/lo */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginBottom: '8px', fontFamily: 'JetBrains Mono, monospace' }}>
-                      {localWeather.data.feelsLike !== localWeather.data.temp && (
-                        <span style={{ color: 'var(--text-muted)' }}>Feels like {localWeather.data.feelsLike}°F</span>
+                      {w.feelsLike !== w.temp && (
+                        <span style={{ color: 'var(--text-muted)' }}>Feels like {w.feelsLike}{deg}</span>
                       )}
-                      {localWeather.data.todayHigh != null && (
+                      {w.todayHigh != null && (
                         <span style={{ color: 'var(--text-muted)', marginLeft: 'auto' }}>
-                          <span style={{ color: 'var(--accent-amber)' }}>▲{localWeather.data.todayHigh}°</span>
+                          <span style={{ color: 'var(--accent-amber)' }}>▲{w.todayHigh}°</span>
                           {' '}
-                          <span style={{ color: 'var(--accent-blue)' }}>▼{localWeather.data.todayLow}°</span>
+                          <span style={{ color: 'var(--accent-blue)' }}>▼{w.todayLow}°</span>
                         </span>
                       )}
                     </div>
@@ -667,50 +701,50 @@ const App = () => {
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ color: 'var(--text-muted)' }}>💨 Wind</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>{localWeather.data.windDir} {localWeather.data.windSpeed} mph</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{w.windDir} {w.windSpeed} {wind}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ color: 'var(--text-muted)' }}>💧 Humidity</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>{localWeather.data.humidity}%</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{w.humidity}%</span>
                       </div>
-                      {localWeather.data.windGusts > localWeather.data.windSpeed + 5 && (
+                      {w.windGusts > w.windSpeed + 5 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>🌬️ Gusts</span>
-                          <span style={{ color: 'var(--text-secondary)' }}>{localWeather.data.windGusts} mph</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{w.windGusts} {wind}</span>
                         </div>
                       )}
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ color: 'var(--text-muted)' }}>🌡️ Dew Pt</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>{localWeather.data.dewPoint}°F</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{w.dewPoint}{deg}</span>
                       </div>
-                      {localWeather.data.pressure && (
+                      {w.pressure && (
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>🔵 Pressure</span>
-                          <span style={{ color: 'var(--text-secondary)' }}>{localWeather.data.pressure} hPa</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{w.pressure} hPa</span>
                         </div>
                       )}
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ color: 'var(--text-muted)' }}>☁️ Clouds</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>{localWeather.data.cloudCover}%</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{w.cloudCover}%</span>
                       </div>
-                      {localWeather.data.visibility && (
+                      {w.visibility && (
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>👁️ Vis</span>
-                          <span style={{ color: 'var(--text-secondary)' }}>{localWeather.data.visibility} mi</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{w.visibility} {vis}</span>
                         </div>
                       )}
-                      {localWeather.data.uvIndex > 0 && (
+                      {w.uvIndex > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>☀️ UV</span>
-                          <span style={{ color: localWeather.data.uvIndex >= 8 ? '#ef4444' : localWeather.data.uvIndex >= 6 ? '#f97316' : localWeather.data.uvIndex >= 3 ? '#eab308' : 'var(--text-secondary)' }}>
-                            {localWeather.data.uvIndex.toFixed(1)}
+                          <span style={{ color: w.uvIndex >= 8 ? '#ef4444' : w.uvIndex >= 6 ? '#f97316' : w.uvIndex >= 3 ? '#eab308' : 'var(--text-secondary)' }}>
+                            {w.uvIndex.toFixed(1)}
                           </span>
                         </div>
                       )}
                     </div>
                     
                     {/* 3-Day Forecast */}
-                    {localWeather.data.daily?.length > 0 && (
+                    {w.daily?.length > 0 && (
                       <div style={{ 
                         marginTop: '10px', 
                         paddingTop: '8px', 
@@ -718,7 +752,7 @@ const App = () => {
                       }}>
                         <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: '600' }}>FORECAST</div>
                         <div style={{ display: 'flex', gap: '4px' }}>
-                          {localWeather.data.daily.map((day, i) => (
+                          {w.daily.map((day, i) => (
                             <div key={i} style={{ 
                               flex: 1, 
                               textAlign: 'center', 
@@ -747,7 +781,8 @@ const App = () => {
                   </div>
                 )}
               </div>
-            )}
+              );
+            })()}
           </div>
           
           {/* DX Location */}

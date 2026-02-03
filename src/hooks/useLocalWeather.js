@@ -43,7 +43,7 @@ function windDirection(deg) {
   return dirs[Math.round(deg / 22.5) % 16];
 }
 
-export const useLocalWeather = (location) => {
+export const useLocalWeather = (location, tempUnit = 'F') => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -52,15 +52,16 @@ export const useLocalWeather = (location) => {
 
     const fetchWeather = async () => {
       try {
+        const isMetric = tempUnit === 'C';
         const params = [
           `latitude=${location.lat}`,
           `longitude=${location.lon}`,
           'current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,uv_index,visibility,dew_point_2m,is_day',
           'daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,weather_code,sunrise,sunset,uv_index_max,wind_speed_10m_max',
           'hourly=temperature_2m,precipitation_probability,weather_code',
-          'temperature_unit=fahrenheit',
-          'wind_speed_unit=mph',
-          'precipitation_unit=inch',
+          `temperature_unit=${isMetric ? 'celsius' : 'fahrenheit'}`,
+          `wind_speed_unit=${isMetric ? 'kmh' : 'mph'}`,
+          `precipitation_unit=${isMetric ? 'mm' : 'inch'}`,
           'timezone=auto',
           'forecast_days=3',
           'forecast_hours=24',
@@ -128,7 +129,11 @@ export const useLocalWeather = (location) => {
           windGusts: Math.round(current.wind_gusts_10m || 0),
           precipitation: current.precipitation || 0,
           uvIndex: current.uv_index || 0,
-          visibility: current.visibility ? (current.visibility / 1609.34).toFixed(1) : null, // meters to miles
+          visibility: current.visibility 
+            ? isMetric 
+              ? (current.visibility / 1000).toFixed(1)  // meters to km
+              : (current.visibility / 1609.34).toFixed(1) // meters to miles
+            : null,
           isDay: current.is_day === 1,
           weatherCode: code,
           // Today's highs/lows
@@ -139,6 +144,10 @@ export const useLocalWeather = (location) => {
           daily: dailyForecast,
           // Timezone
           timezone: result.timezone || '',
+          // Units
+          tempUnit: isMetric ? 'C' : 'F',
+          windUnit: isMetric ? 'km/h' : 'mph',
+          visUnit: isMetric ? 'km' : 'mi',
         });
       } catch (err) {
         console.error('Weather error:', err);
@@ -150,7 +159,7 @@ export const useLocalWeather = (location) => {
     fetchWeather();
     const interval = setInterval(fetchWeather, 15 * 60 * 1000); // 15 minutes
     return () => clearInterval(interval);
-  }, [location?.lat, location?.lon]);
+  }, [location?.lat, location?.lon, tempUnit]);
 
   return { data, loading };
 };
