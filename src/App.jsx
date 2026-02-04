@@ -21,6 +21,9 @@ import {
   DXNewsTicker
 } from './components';
 
+// Dockable layout
+import DockableApp from './DockableApp.jsx';
+
 // Hooks
 import {
   useSpaceWeather,
@@ -332,7 +335,62 @@ const App = () => {
       alignItems: 'center',
       overflow: 'hidden'
     }}>
-      {config.layout === 'classic' ? (
+      {config.layout === 'dockable' ? (
+        /* DOCKABLE PANEL LAYOUT */
+        <DockableApp
+          config={config}
+          currentTime={currentTime}
+          deGrid={deGrid}
+          dxGrid={dxGrid}
+          dxLocation={dxLocation}
+          deSunTimes={deSunTimes}
+          dxSunTimes={dxSunTimes}
+          handleDXChange={handleDXChange}
+          localWeather={localWeather}
+          weatherExpanded={weatherExpanded}
+          setWeatherExpanded={setWeatherExpanded}
+          tempUnit={tempUnit}
+          setTempUnit={setTempUnit}
+          spaceWeather={spaceWeather}
+          solarIndices={solarIndices}
+          bandConditions={bandConditions}
+          propagation={propagation}
+          dxCluster={dxCluster}
+          dxPaths={dxPaths}
+          potaSpots={potaSpots}
+          mySpots={mySpots}
+          dxpeditions={dxpeditions}
+          contests={contests}
+          satellites={satellites}
+          pskReporter={pskReporter}
+          wsjtx={wsjtx}
+          filteredPskSpots={filteredPskSpots}
+          wsjtxMapSpots={wsjtxMapSpots}
+          dxFilters={dxFilters}
+          setDxFilters={setDxFilters}
+          pskFilters={pskFilters}
+          setShowDXFilters={setShowDXFilters}
+          setShowPSKFilters={setShowPSKFilters}
+          mapLayers={mapLayers}
+          toggleDXPaths={toggleDXPaths}
+          toggleDXLabels={toggleDXLabels}
+          togglePOTA={togglePOTA}
+          toggleSatellites={toggleSatellites}
+          togglePSKReporter={togglePSKReporter}
+          toggleWSJTX={toggleWSJTX}
+          hoveredSpot={hoveredSpot}
+          setHoveredSpot={setHoveredSpot}
+          utcTime={utcTime}
+          utcDate={utcDate}
+          localTime={localTime}
+          localDate={localDate}
+          use12Hour={use12Hour}
+          handleTimeFormatToggle={handleTimeFormatToggle}
+          setShowSettings={setShowSettings}
+          handleFullscreenToggle={handleFullscreenToggle}
+          isFullscreen={isFullscreen}
+        />
+      ) : config.layout === 'classic' ? (
         /* CLASSIC HAMCLOCK-STYLE LAYOUT */
         <div style={{ 
           width: '100vw',

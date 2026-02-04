@@ -223,7 +223,8 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave }) => {
     modern: t('station.settings.layout.modern.describe'),
     classic: t('station.settings.layout.classic.describe'),
     tablet: t('station.settings.layout.tablet.describe'),
-    compact: t('station.settings.layout.compact.describe')
+    compact: t('station.settings.layout.compact.describe'),
+    dockable: 'Resizable, draggable panels with tabs'
   };
 
   return (
@@ -524,8 +525,8 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave }) => {
               <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px' }}>
                 {t('station.settings.layout')}
               </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-                {['modern', 'classic', 'tablet', 'compact'].map((l) => (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                {['modern', 'classic', 'tablet', 'compact', 'dockable'].map((l) => (
                   <button
                     key={l}
                     onClick={() => setLayout(l)}
@@ -535,12 +536,12 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave }) => {
                       border: `1px solid ${layout === l ? 'var(--accent-amber)' : 'var(--border-color)'}`,
                       borderRadius: '6px',
                       color: layout === l ? '#000' : 'var(--text-secondary)',
-                      fontSize: '13px',
+                      fontSize: '12px',
                       cursor: 'pointer',
                       fontWeight: layout === l ? '600' : '400'
                     }}
                   >
-                    {l === 'modern' ? '🖥️' : l === 'classic' ? '📺' : l === 'tablet' ? '📱' : '📊'} {t('station.settings.layout.' + l)}
+                    {l === 'modern' ? '🖥️' : l === 'classic' ? '📺' : l === 'tablet' ? '📱' : l === 'compact' ? '📊' : '⊞'} {l === 'dockable' ? 'Dockable' : t('station.settings.layout.' + l)}
                   </button>
                 ))}
               </div>
