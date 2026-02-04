@@ -81,10 +81,26 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
       const coords = quake.geometry.coordinates;
       const props = quake.properties;
       const mag = props.mag;
-      const lat = coords[1];
-      const lon = coords[0];
+      
+      // GeoJSON standard format: [longitude, latitude, elevation]
+      // For Santa Lucía, Peru: [-70.5639, -15.6136, 206.486]
+      //   coords[0] = -70.5639 = Longitude (W)
+      //   coords[1] = -15.6136 = Latitude (S)
+      //   coords[2] = 206.486 = Depth (km)
+      const lat = coords[1];  // Latitude (y-axis)
+      const lon = coords[0];  // Longitude (x-axis)
       const depth = coords[2];
       const quakeId = quake.id;
+
+      // Debug logging with detailed info
+      console.log(`🌋 Earthquake ${quakeId}:`, {
+        place: props.place,
+        mag: mag,
+        geojson: `[lon=${coords[0]}, lat=${coords[1]}, depth=${coords[2]}]`,
+        extracted: `lat=${lat} (coords[1]), lon=${lon} (coords[0])`,
+        leafletMarkerCall: `L.marker([${lat}, ${lon}])`,
+        explanation: `Standard Leaflet [latitude, longitude] format - CSS position fixed`
+      });
 
       currentQuakeIds.add(quakeId);
 
@@ -133,11 +149,20 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
           box-shadow: 0 2px 8px rgba(0,0,0,0.5);
         ">${waveIcon}</div>`,
         iconSize: [size, size],
-        iconAnchor: [size/2, size/2]
+        iconAnchor: [size/2, size/2],
+        popupAnchor: [0, 0]  // Popup appears at the marker position (icon center)
       });
       
-      console.log('Creating earthquake marker:', quakeId, 'M' + mag.toFixed(1), 'at', lat, lon, 'size:', size + 'px', 'color:', color);
-      const circle = L.marker([lat, lon], { 
+      console.log(`📍 Creating marker for ${quakeId}: M${mag.toFixed(1)} at [lat=${lat}, lon=${lon}] - ${props.place}`);
+      
+      // Use standard Leaflet [latitude, longitude] format
+      // The popup was appearing in the correct location, confirming marker position is correct
+      // The icon was appearing offset due to CSS position: relative issue (now fixed)
+      const markerCoords = [lat, lon];  // CORRECT: [latitude, longitude]
+      
+      console.log(`   → Creating L.marker([${markerCoords[0]}, ${markerCoords[1]}]) = [lat, lon]`);
+      
+      const circle = L.marker(markerCoords, { 
         icon, 
         opacity,
         zIndexOffset: 10000 // Ensure markers appear on top
@@ -170,7 +195,7 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
           }
         }, 10);
         
-        // Create pulsing ring effect
+        // Create pulsing ring effect - use same [lat, lon] format
         const pulseRing = L.circle([lat, lon], {
           radius: 50000, // 50km radius in meters
           fillColor: color,

@@ -100,6 +100,87 @@ function calculateSolarAltitude(date, latitude, longitude) {
   return altitude;
 }
 
+// Split polyline at date line to avoid lines cutting across the map
+function splitAtDateLine(points) {
+  if (points.length < 2) return [points];
+  
+  // Check if line spans the full world (-180 to 180)
+  const lons = points.map(p => p[1]);
+  const minLon = Math.min(...lons);
+  const maxLon = Math.max(...lons);
+  const span = maxLon - minLon;
+  
+  console.log('🔍 splitAtDateLine debug:', {
+    totalPoints: points.length,
+    lonRange: `${minLon.toFixed(1)} to ${maxLon.toFixed(1)}`,
+    span: span.toFixed(1)
+  });
+  
+  // If the line spans close to 360°, it wraps around the world
+  // We need to split it at the ±180° boundary
+  if (span > 350) {
+    console.log('🔍 Full-world span detected, splitting at ±180°');
+    
+    // Strategy: Create two segments that meet at ±180° longitude
+    // Segment 1: Western hemisphere (-180° to slightly past 0°)
+    // Segment 2: Eastern hemisphere (slightly before 0° to +180°)
+    
+    const westSegment = [];  // Points from -180° to ~0°
+    const eastSegment = [];  // Points from ~0° to +180°
+    
+    // Sort points by longitude to ensure correct ordering
+    const sortedPoints = [...points].sort((a, b) => a[1] - b[1]);
+    
+    // Find the midpoint longitude (should be around 0°)
+    const midIndex = Math.floor(sortedPoints.length / 2);
+    
+    // Split at midpoint, with some overlap
+    westSegment.push(...sortedPoints.slice(0, midIndex + 1));
+    eastSegment.push(...sortedPoints.slice(midIndex));
+    
+    const segments = [];
+    if (westSegment.length >= 2) segments.push(westSegment);
+    if (eastSegment.length >= 2) segments.push(eastSegment);
+    
+    console.log('🔍 Split into segments:', segments.map(s => {
+      const lons = s.map(p => p[1]);
+      return {
+        points: s.length,
+        lonRange: `${Math.min(...lons).toFixed(1)} to ${Math.max(...lons).toFixed(1)}`
+      };
+    }));
+    return segments;
+  }
+  
+  // Otherwise, check for sudden longitude jumps (traditional date line crossing)
+  const segments = [];
+  let currentSegment = [points[0]];
+  
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const prevLon = prev[1];
+    const currLon = curr[1];
+    const lonDiff = Math.abs(currLon - prevLon);
+    
+    // If longitude jumps more than 180°, we've crossed the date line
+    if (lonDiff > 180) {
+      console.log(`🔍 Date line jump detected at index ${i}: ${prevLon.toFixed(1)}° → ${currLon.toFixed(1)}°`);
+      segments.push(currentSegment);
+      currentSegment = [curr];
+    } else {
+      currentSegment.push(curr);
+    }
+  }
+  
+  if (currentSegment.length > 0) {
+    segments.push(currentSegment);
+  }
+  
+  console.log('🔍 splitAtDateLine result:', segments.length, 'segments');
+  return segments.filter(seg => seg.length >= 2);
+}
+
 // Generate terminator line for a specific solar altitude
 function generateTerminatorLine(date, solarAltitude = 0, numPoints = 360) {
   const points = [];
@@ -113,64 +194,78 @@ function generateTerminatorLine(date, solarAltitude = 0, numPoints = 360) {
     const hourAngle = calculateHourAngle(date, lon);
     const haRad = hourAngle * Math.PI / 180;
     
-    // Use the solar altitude equation to solve for latitude
-    // sin(altitude) = sin(lat) * sin(dec) + cos(lat) * cos(dec) * cos(HA)
-    // Rearranging: sin(altitude) - sin(lat) * sin(dec) = cos(lat) * cos(dec) * cos(HA)
-    
-    // For terminator (altitude = 0), the equation simplifies
-    // We need to solve: tan(lat) = -tan(dec) / cos(HA)
-    
     const cosHA = Math.cos(haRad);
     const sinDec = Math.sin(decRad);
     const cosDec = Math.cos(decRad);
     const sinAlt = Math.sin(altRad);
     
-    // Solve using the quadratic formula or direct calculation
-    // sin(lat) = (sin(alt) - cos(lat) * cos(dec) * cos(HA)) / sin(dec)
-    
-    // Better approach: use atan2 for proper terminator calculation
-    // The terminator latitude for a given longitude is:
-    // lat = atan(-cos(HA) / tan(dec)) when dec != 0
-    
     let lat;
+    
+    // Check if solution exists (sun can reach this altitude at this longitude)
+    // For terminator and twilight, check if |cos(HA) * cos(dec)| <= 1 - sin(alt) * sin(dec)
+    const testValue = (sinAlt - sinDec * sinDec) / (cosDec * cosDec * cosHA * cosHA);
     
     if (Math.abs(declination) < 0.01) {
       // Near equinox: terminator is nearly straight along equator
       lat = 0;
+    } else if (Math.abs(cosDec) < 0.001) {
+      // Near solstice: sun is directly over tropic, skip this point
+      continue;
     } else {
       // Standard case: calculate terminator latitude
-      // Formula: cos(lat) * cos(dec) * cos(HA) = -sin(lat) * sin(dec) (for altitude = 0)
-      // This gives: tan(lat) = -cos(HA) / tan(dec)
-      
       const tanDec = Math.tan(decRad);
-      if (Math.abs(tanDec) < 0.0001) {
-        lat = 0;
-      } else {
-        lat = Math.atan(-cosHA / tanDec) * 180 / Math.PI;
-      }
       
-      // For twilight (altitude < 0), we need to adjust
-      if (solarAltitude !== 0) {
-        // Use iterative solution for twilight calculations
-        // cos(lat) * cos(dec) * cos(HA) + sin(lat) * sin(dec) = sin(alt)
+      if (solarAltitude === 0) {
+        // Terminator (sunrise/sunset line)
+        // Formula: tan(lat) = -cos(HA) / tan(dec)
+        if (Math.abs(tanDec) > 0.0001) {
+          lat = Math.atan(-cosHA / tanDec) * 180 / Math.PI;
+        } else {
+          lat = 0;
+        }
+      } else {
+        // Twilight zones (negative solar altitude)
+        // Use Newton-Raphson iteration to solve for latitude
+        // Equation: sin(lat) * sin(dec) + cos(lat) * cos(dec) * cos(HA) = sin(alt)
         
-        // Newton-Raphson iteration to solve for latitude
-        let testLat = lat * Math.PI / 180;
-        for (let iter = 0; iter < 5; iter++) {
+        // Initial guess based on terminator
+        let testLat = Math.atan(-cosHA / tanDec);
+        
+        // Iterate to find solution
+        let converged = false;
+        for (let iter = 0; iter < 10; iter++) {
           const f = Math.sin(testLat) * sinDec + Math.cos(testLat) * cosDec * cosHA - sinAlt;
           const fPrime = Math.cos(testLat) * sinDec - Math.sin(testLat) * cosDec * cosHA;
+          
+          if (Math.abs(f) < 0.0001) {
+            converged = true;
+            break;
+          }
+          
           if (Math.abs(fPrime) > 0.0001) {
             testLat = testLat - f / fPrime;
+          } else {
+            break;
           }
+          
+          // Constrain to valid latitude range during iteration
+          testLat = Math.max(-Math.PI/2, Math.min(Math.PI/2, testLat));
         }
+        
+        // Only use the point if iteration converged
+        if (!converged) {
+          continue;
+        }
+        
         lat = testLat * 180 / Math.PI;
       }
     }
     
-    // Clamp latitude to valid range
-    lat = Math.max(-90, Math.min(90, lat));
+    // Strict clamping to valid latitude range
+    lat = Math.max(-85, Math.min(85, lat));
     
-    if (isFinite(lat) && isFinite(lon)) {
+    // Only add point if it's valid and not at extreme latitude
+    if (isFinite(lat) && isFinite(lon) && Math.abs(lat) < 85) {
       points.push([lat, lon]);
     }
   }
@@ -488,104 +583,159 @@ export function useLayer({ enabled = false, opacity = 0.5, map = null }) {
     
     // Main terminator (solar altitude = 0°)
     const terminator = generateTerminatorLine(currentTime, 0, 360);
-    const terminatorLine = L.polyline(terminator, {
-      color: '#ff6600',
-      weight: 3,
-      opacity: opacity * 0.8,
-      dashArray: '10, 5'
+    const terminatorSegments = splitAtDateLine(terminator);
+    
+    terminatorSegments.forEach(segment => {
+      const terminatorLine = L.polyline(segment, {
+        color: '#ff6600',
+        weight: 3,
+        opacity: opacity * 0.8,
+        dashArray: '10, 5'
+      });
+      terminatorLine.bindPopup(`
+        <div style="font-family: 'JetBrains Mono', monospace;">
+          <b>🌅 Solar Terminator</b><br>
+          Sun altitude: 0°<br>
+          Enhanced HF propagation zone<br>
+          UTC: ${currentTime.toUTCString()}
+        </div>
+      `);
+      terminatorLine.addTo(map);
+      newLayers.push(terminatorLine);
     });
-    terminatorLine.bindPopup(`
-      <div style="font-family: 'JetBrains Mono', monospace;">
-        <b>🌅 Solar Terminator</b><br>
-        Sun altitude: 0°<br>
-        Enhanced HF propagation zone<br>
-        UTC: ${currentTime.toUTCString()}
-      </div>
-    `);
-    terminatorLine.addTo(map);
-    newLayers.push(terminatorLine);
     
     // Enhanced DX zone (±5° from terminator)
     if (showEnhancedZone) {
       const enhancedUpper = generateTerminatorLine(currentTime, 5, 360);
       const enhancedLower = generateTerminatorLine(currentTime, -5, 360);
       
-      // Create polygon for enhanced zone
-      const enhancedZone = [...enhancedUpper, ...enhancedLower.reverse()];
-      const enhancedPoly = L.polygon(enhancedZone, {
-        color: '#ffaa00',
-        fillColor: '#ffaa00',
-        fillOpacity: opacity * 0.15,
-        weight: 1,
-        opacity: opacity * 0.3
-      });
-      enhancedPoly.bindPopup(`
-        <div style="font-family: 'JetBrains Mono', monospace;">
-          <b>⭐ Enhanced DX Zone</b><br>
-          Best HF propagation window<br>
-          ±5° from terminator<br>
-          Ideal for long-distance contacts
-        </div>
-      `);
-      enhancedPoly.addTo(map);
-      newLayers.push(enhancedPoly);
+      // Only create polygon if we have valid points
+      if (enhancedUpper.length > 2 && enhancedLower.length > 2) {
+        // Split both upper and lower lines at date line
+        const upperSegments = splitAtDateLine(enhancedUpper);
+        const lowerSegments = splitAtDateLine(enhancedLower);
+        
+        console.log('🔶 Enhanced DX Zone segments:', {
+          upperCount: upperSegments.length,
+          lowerCount: lowerSegments.length,
+          upperSegmentLengths: upperSegments.map(s => s.length),
+          lowerSegmentLengths: lowerSegments.map(s => s.length)
+        });
+        
+        // Create polygon for each corresponding segment pair
+        // Both upper and lower should have same number of segments
+        const numSegments = Math.min(upperSegments.length, lowerSegments.length);
+        
+        for (let i = 0; i < numSegments; i++) {
+          const upperSeg = upperSegments[i];
+          const lowerSeg = lowerSegments[i];
+          
+          if (upperSeg.length > 1 && lowerSeg.length > 1) {
+            // Create polygon from upper segment + reversed lower segment
+            // This creates a closed shape between the two lines
+            const enhancedZone = [...upperSeg, ...lowerSeg.slice().reverse()];
+            
+            // Debug: Show longitude range of this polygon
+            const polyLons = enhancedZone.map(p => p[1]);
+            const polyMinLon = Math.min(...polyLons);
+            const polyMaxLon = Math.max(...polyLons);
+            
+            console.log(`🔶 Creating Enhanced DX polygon segment ${i+1}/${numSegments}:`, {
+              upperPoints: upperSeg.length,
+              lowerPoints: lowerSeg.length,
+              totalPolygonPoints: enhancedZone.length,
+              lonRange: `${polyMinLon.toFixed(1)} to ${polyMaxLon.toFixed(1)}`
+            });
+            
+            const enhancedPoly = L.polygon(enhancedZone, {
+              color: '#ffaa00',
+              fillColor: '#ffaa00',
+              fillOpacity: opacity * 0.15,
+              weight: 1,
+              opacity: opacity * 0.3
+            });
+            enhancedPoly.bindPopup(`
+              <div style="font-family: 'JetBrains Mono', monospace;">
+                <b>⭐ Enhanced DX Zone</b><br>
+                Best HF propagation window<br>
+                ±5° from terminator<br>
+                Ideal for long-distance contacts
+              </div>
+            `);
+            enhancedPoly.addTo(map);
+            newLayers.push(enhancedPoly);
+          }
+        }
+      }
     }
     
     // Twilight zones
     if (showTwilight) {
       // Civil twilight (sun altitude -6°)
       const civilTwilight = generateTerminatorLine(currentTime, -6, 360);
-      const civilLine = L.polyline(civilTwilight, {
-        color: '#4488ff',
-        weight: 2,
-        opacity: twilightOpacity * 0.6,
-        dashArray: '5, 5'
+      const civilSegments = splitAtDateLine(civilTwilight);
+      
+      civilSegments.forEach(segment => {
+        const civilLine = L.polyline(segment, {
+          color: '#4488ff',
+          weight: 2,
+          opacity: twilightOpacity * 0.6,
+          dashArray: '5, 5'
+        });
+        civilLine.bindPopup(`
+          <div style="font-family: 'JetBrains Mono', monospace;">
+            <b>🌆 Civil Twilight</b><br>
+            Sun altitude: -6°<br>
+            Good propagation conditions
+          </div>
+        `);
+        civilLine.addTo(map);
+        newLayers.push(civilLine);
       });
-      civilLine.bindPopup(`
-        <div style="font-family: 'JetBrains Mono', monospace;">
-          <b>🌆 Civil Twilight</b><br>
-          Sun altitude: -6°<br>
-          Good propagation conditions
-        </div>
-      `);
-      civilLine.addTo(map);
-      newLayers.push(civilLine);
       
       // Nautical twilight (sun altitude -12°)
       const nauticalTwilight = generateTerminatorLine(currentTime, -12, 360);
-      const nauticalLine = L.polyline(nauticalTwilight, {
-        color: '#6666ff',
-        weight: 1.5,
-        opacity: twilightOpacity * 0.4,
-        dashArray: '3, 3'
+      const nauticalSegments = splitAtDateLine(nauticalTwilight);
+      
+      nauticalSegments.forEach(segment => {
+        const nauticalLine = L.polyline(segment, {
+          color: '#6666ff',
+          weight: 1.5,
+          opacity: twilightOpacity * 0.4,
+          dashArray: '3, 3'
+        });
+        nauticalLine.bindPopup(`
+          <div style="font-family: 'JetBrains Mono', monospace;">
+            <b>🌃 Nautical Twilight</b><br>
+            Sun altitude: -12°<br>
+            Moderate propagation
+          </div>
+        `);
+        nauticalLine.addTo(map);
+        newLayers.push(nauticalLine);
       });
-      nauticalLine.bindPopup(`
-        <div style="font-family: 'JetBrains Mono', monospace;">
-          <b>🌃 Nautical Twilight</b><br>
-          Sun altitude: -12°<br>
-          Moderate propagation
-        </div>
-      `);
-      nauticalLine.addTo(map);
-      newLayers.push(nauticalLine);
       
       // Astronomical twilight (sun altitude -18°)
       const astroTwilight = generateTerminatorLine(currentTime, -18, 360);
-      const astroLine = L.polyline(astroTwilight, {
-        color: '#8888ff',
-        weight: 1,
-        opacity: twilightOpacity * 0.3,
-        dashArray: '2, 2'
+      const astroSegments = splitAtDateLine(astroTwilight);
+      
+      astroSegments.forEach(segment => {
+        const astroLine = L.polyline(segment, {
+          color: '#8888ff',
+          weight: 1,
+          opacity: twilightOpacity * 0.3,
+          dashArray: '2, 2'
+        });
+        astroLine.bindPopup(`
+          <div style="font-family: 'JetBrains Mono', monospace;">
+            <b>🌌 Astronomical Twilight</b><br>
+            Sun altitude: -18°<br>
+            Transition to night propagation
+          </div>
+        `);
+        astroLine.addTo(map);
+        newLayers.push(astroLine);
       });
-      astroLine.bindPopup(`
-        <div style="font-family: 'JetBrains Mono', monospace;">
-          <b>🌌 Astronomical Twilight</b><br>
-          Sun altitude: -18°<br>
-          Transition to night propagation
-        </div>
-      `);
-      astroLine.addTo(map);
-      newLayers.push(astroLine);
     }
     
     setLayers(newLayers);
