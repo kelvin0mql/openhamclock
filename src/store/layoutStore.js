@@ -52,7 +52,7 @@ export const DEFAULT_LAYOUT = {
         weight: 56,
         id: 'center-tabset',
         children: [
-          { type: 'tab', name: 'World Map', component: 'world-map', id: 'map-tab', enableClose: false }
+          { type: 'tab', name: 'World Map', component: 'world-map', id: 'map-tab' }
         ]
       },
       {

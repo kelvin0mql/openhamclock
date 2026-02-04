@@ -299,7 +299,13 @@ export const DockableApp = ({
         return <ContestPanel data={contests.data} loading={contests.loading} />;
 
       default:
-        return <div style={{ padding: '20px', color: '#888' }}>Unknown: {component}</div>;
+        // Handle legacy layout components - prompt user to reset
+        return (
+          <div style={{ padding: '20px', color: '#ff6b6b', textAlign: 'center' }}>
+            <div style={{ fontSize: '14px', marginBottom: '8px' }}>Outdated panel: {component}</div>
+            <div style={{ fontSize: '12px', color: '#888' }}>Click "Reset" button below to update layout</div>
+          </div>
+        );
     }
   }, [
     config, deGrid, dxGrid, dxLocation, deSunTimes, dxSunTimes, localWeather, solarIndices,
