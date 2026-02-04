@@ -24,6 +24,7 @@ const fetch = require('node-fetch');
 const net = require('net');
 const dgram = require('dgram');
 const fs = require('fs');
+const { execFile, spawn } = require('child_process');
 
 // Read version from package.json as single source of truth
 const APP_VERSION = (() => {
@@ -338,6 +339,131 @@ setInterval(() => {
     console.log(`[Visitors] Today so far: ${visitorStats.uniqueIPs.size} unique, ${visitorStats.totalRequests} requests | All-time: ${visitorStats.allTimeVisitors} visitors | Avg: ${avg}/day`);
   }
 }, 60 * 60 * 1000);
+
+// ============================================
+// AUTO UPDATE (GIT)
+// ============================================
+const AUTO_UPDATE_ENABLED = process.env.AUTO_UPDATE_ENABLED === 'true';
+const AUTO_UPDATE_INTERVAL_MINUTES = parseInt(process.env.AUTO_UPDATE_INTERVAL_MINUTES || '60');
+const AUTO_UPDATE_ON_START = process.env.AUTO_UPDATE_ON_START === 'true';
+const AUTO_UPDATE_EXIT_AFTER = process.env.AUTO_UPDATE_EXIT_AFTER !== 'false';
+
+const autoUpdateState = {
+  inProgress: false,
+  lastCheck: 0,
+  lastResult: ''
+};
+
+function execFilePromise(cmd, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, options, (err, stdout, stderr) => {
+      if (err) {
+        err.stdout = stdout;
+        err.stderr = stderr;
+        return reject(err);
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function hasGitUpdates() {
+  await execFilePromise('git', ['fetch', 'origin'], { cwd: __dirname });
+  const local = (await execFilePromise('git', ['rev-parse', 'HEAD'], { cwd: __dirname })).stdout.trim();
+  let remote = '';
+  try {
+    remote = (await execFilePromise('git', ['rev-parse', 'origin/main'], { cwd: __dirname })).stdout.trim();
+  } catch {
+    remote = (await execFilePromise('git', ['rev-parse', 'origin/master'], { cwd: __dirname })).stdout.trim();
+  }
+  return { updateAvailable: local !== remote, local, remote };
+}
+
+async function hasDirtyWorkingTree() {
+  const status = await execFilePromise('git', ['status', '--porcelain'], { cwd: __dirname });
+  return status.stdout.trim().length > 0;
+}
+
+function runUpdateScript() {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(__dirname, 'scripts', 'update.sh');
+    const child = spawn('bash', [scriptPath, '--auto'], {
+      cwd: __dirname,
+      stdio: 'inherit'
+    });
+    child.on('exit', (code) => {
+      if (code === 0) return resolve();
+      reject(new Error(`update.sh exited with code ${code}`));
+    });
+  });
+}
+
+async function autoUpdateTick(trigger = 'interval') {
+  if (!AUTO_UPDATE_ENABLED || autoUpdateState.inProgress) return;
+  autoUpdateState.inProgress = true;
+  autoUpdateState.lastCheck = Date.now();
+
+  try {
+    if (!fs.existsSync(path.join(__dirname, '.git'))) {
+      autoUpdateState.lastResult = 'not-git';
+      logWarn('[Auto Update] Skipped - not a git repository');
+      return;
+    }
+
+    try {
+      await execFilePromise('git', ['--version']);
+    } catch {
+      autoUpdateState.lastResult = 'no-git';
+      logWarn('[Auto Update] Skipped - git not installed');
+      return;
+    }
+
+    if (await hasDirtyWorkingTree()) {
+      autoUpdateState.lastResult = 'dirty';
+      logWarn('[Auto Update] Skipped - local changes detected');
+      return;
+    }
+
+    const { updateAvailable } = await hasGitUpdates();
+    if (!updateAvailable) {
+      autoUpdateState.lastResult = 'up-to-date';
+      logInfo(`[Auto Update] Up to date (${trigger})`);
+      return;
+    }
+
+    autoUpdateState.lastResult = 'updating';
+    logInfo('[Auto Update] Updates available - running update script');
+    await runUpdateScript();
+    autoUpdateState.lastResult = 'updated';
+    logInfo('[Auto Update] Update complete');
+
+    if (AUTO_UPDATE_EXIT_AFTER) {
+      logInfo('[Auto Update] Exiting to allow restart');
+      process.exit(0);
+    }
+  } catch (err) {
+    autoUpdateState.lastResult = 'error';
+    logErrorOnce('Auto Update', err.message);
+  } finally {
+    autoUpdateState.inProgress = false;
+  }
+}
+
+function startAutoUpdateScheduler() {
+  if (!AUTO_UPDATE_ENABLED) return;
+  const intervalMinutes = Number.isFinite(AUTO_UPDATE_INTERVAL_MINUTES) && AUTO_UPDATE_INTERVAL_MINUTES > 0
+    ? AUTO_UPDATE_INTERVAL_MINUTES
+    : 60;
+  const intervalMs = Math.max(5, intervalMinutes) * 60 * 1000;
+
+  logInfo(`[Auto Update] Enabled - every ${intervalMinutes} minutes`);
+
+  if (AUTO_UPDATE_ON_START) {
+    setTimeout(() => autoUpdateTick('startup'), 30000);
+  }
+
+  setInterval(() => autoUpdateTick('interval'), intervalMs);
+}
 
 // Serve static files
 // dist/ contains the built React app (from npm run build)
@@ -4777,6 +4903,9 @@ app.listen(PORT, '0.0.0.0', () => {
   if (WSJTX_RELAY_KEY) {
     console.log(`  🔁 WSJT-X relay endpoint enabled (POST /api/wsjtx/relay)`);
   }
+  if (AUTO_UPDATE_ENABLED) {
+    console.log(`  🔄 Auto-update enabled every ${AUTO_UPDATE_INTERVAL_MINUTES || 60} minutes`);
+  }
   console.log('  🖥️  Open your browser to start using OpenHamClock');
   console.log('');
   if (CONFIG.callsign !== 'N0CALL') {
@@ -4788,6 +4917,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('  In memory of Elwood Downey, WB0OEW');
   console.log('  73 de OpenHamClock contributors');
   console.log('');
+
+  startAutoUpdateScheduler();
 });
 
 // Graceful shutdown
