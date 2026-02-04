@@ -154,12 +154,11 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign 
     }
 
     try {
-      console.log(`[RBN] Fetching spots for ${callsign}...`);
+      console.log(`[RBN] Fetching real-time spots for ${callsign}...`);
       
-      // RBN API endpoint - using PSKReporter for CW spots
-      // Format: /api/rbn?callsign=CALLSIGN&minutes=60
+      // New streaming API - get ALL recent spots
       const response = await fetch(
-        `/api/rbn?callsign=${encodeURIComponent(callsign)}&minutes=${timeWindow}`,
+        `/api/rbn/spots?minutes=${timeWindow}`,
         { headers: { 'Accept': 'application/json' } }
       );
       
@@ -168,32 +167,60 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign 
       }
       
       const data = await response.json();
-      console.log(`[RBN] Received ${data.count || 0} spots for ${callsign}`);
+      console.log(`[RBN] Received ${data.count} total spots`);
       
       if (data && data.spots && Array.isArray(data.spots)) {
-        const now = Date.now();
-        const cutoff = now - (timeWindow * 60 * 1000);
+        // Filter for spots where DX (spotted station) matches OUR callsign
+        const mySpots = data.spots.filter(spot => 
+          spot.dx && spot.dx.toUpperCase() === callsign.toUpperCase()
+        );
         
-        // Filter by time window and SNR threshold
-        const recentSpots = data.spots.filter(spot => {
-          const spotTime = spot.timestamp || now;
-          const meetsTime = spotTime > cutoff;
+        console.log(`[RBN] Found ${mySpots.length} spots for ${callsign}`);
+        
+        // Apply band and SNR filters
+        const filteredSpots = mySpots.filter(spot => {
           const meetsFilter = selectedBand === 'all' || spot.band === selectedBand;
           const meetsSNR = (spot.snr || 0) >= minSNR;
-          return meetsTime && meetsFilter && meetsSNR;
+          return meetsFilter && meetsSNR;
         });
         
-        setSpots(recentSpots);
+        // Lookup locations for each unique skimmer
+        const spotsWithLocations = await Promise.all(
+          filteredSpots.map(async (spot) => {
+            try {
+              // Check if we already have grid in the spot
+              if (!spot.grid) {
+                // Lookup skimmer location (cached on server)
+                const locationResponse = await fetch(`/api/rbn/location/${spot.callsign}`);
+                if (locationResponse.ok) {
+                  const locationData = await locationResponse.json();
+                  return {
+                    ...spot,
+                    grid: locationData.grid,
+                    skimmerLat: locationData.lat,
+                    skimmerLon: locationData.lon,
+                    skimmerCountry: locationData.country
+                  };
+                }
+              }
+            } catch (err) {
+              console.warn(`[RBN] Failed to lookup ${spot.callsign}: ${err.message}`);
+            }
+            return spot;
+          })
+        );
+        
+        setSpots(spotsWithLocations);
         
         // Calculate statistics
-        const validSNRs = recentSpots
+        const validSNRs = spotsWithLocations
           .map(s => s.snr)
           .filter(snr => snr !== null && snr !== undefined);
         
-        const uniqueSkimmers = new Set(recentSpots.map(s => s.skimmer));
+        const uniqueSkimmers = new Set(spotsWithLocations.map(s => s.callsign));
         
         setStats({
-          total: recentSpots.length,
+          total: spotsWithLocations.length,
           skimmers: uniqueSkimmers.size,
           avgSNR: validSNRs.length > 0 
             ? (validSNRs.reduce((a, b) => a + b, 0) / validSNRs.length).toFixed(1)
@@ -209,7 +236,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign 
   useEffect(() => {
     if (enabled && callsign && callsign !== 'N0CALL') {
       fetchRBNSpots();
-      updateIntervalRef.current = setInterval(fetchRBNSpots, 120000); // 2 minutes
+      updateIntervalRef.current = setInterval(fetchRBNSpots, 10000); // Update every 10 seconds for real-time
     }
     
     return () => {
@@ -251,24 +278,31 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign 
 
     // Render each spot
     filteredSpots.forEach(spot => {
-      // RBN Telnet API returns: { skimmer, dx, freq, freqMHz, band, mode, snr, timestamp }
-      // We need to look up the skimmer's grid square - for now skip spots without coordinates
-      const skimmerGrid = spot.grid || spot.de_grid;
+      // spot contains: { callsign (skimmer), dx (you), freq, band, mode, snr, grid, skimmerLat, skimmerLon }
+      const skimmerGrid = spot.grid;
+      
       if (!skimmerGrid) {
-        console.warn(`[RBN] No grid square for skimmer ${spot.skimmer || 'unknown'}`);
+        console.warn(`[RBN] No grid square for skimmer ${spot.callsign}`);
         return;
       }
 
-      const skimmerLoc = gridToLatLon(skimmerGrid);
+      // Use provided lat/lon if available, otherwise convert grid
+      let skimmerLoc;
+      if (spot.skimmerLat && spot.skimmerLon) {
+        skimmerLoc = { lat: spot.skimmerLat, lon: spot.skimmerLon };
+      } else {
+        skimmerLoc = gridToLatLon(skimmerGrid);
+      }
+      
       if (!skimmerLoc) return;
 
       const snr = spot.snr || 0;
-      const freq = spot.freq || (spot.freqMHz ? spot.freqMHz * 1000000 : 0);
+      const freq = spot.frequency || 0;
       const band = spot.band || freqToBand(freq);
-      const skimmerCall = spot.skimmer || spot.callsign || 'Unknown';
+      const skimmerCall = spot.callsign || 'Unknown';
       const timestamp = new Date(spot.timestamp);
 
-      // Create path line if enabled
+      // Create path line from YOUR location to the SKIMMER
       if (showPaths) {
         const pathPoints = getGreatCirclePath(
           deLocation.lat, deLocation.lon,
