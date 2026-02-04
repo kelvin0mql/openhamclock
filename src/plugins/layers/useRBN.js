@@ -373,7 +373,7 @@ function freqToBand(freq) {
 export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign }) {
   const [spots, setSpots] = useState([]);
   const [selectedBand, setSelectedBand] = useState('all');
-  const [timeWindow, setTimeWindow] = useState(30); // minutes
+  const [timeWindow, setTimeWindow] = useState(5); // minutes (0.1 = 6 seconds, 15 = 15 minutes)
   const [minSNR, setMinSNR] = useState(-10);
   const [showPaths, setShowPaths] = useState(true);
   const [stats, setStats] = useState({ total: 0, skimmers: 0, avgSNR: 0 });
@@ -656,8 +656,8 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign 
           </select>
         </div>
         <div style="margin-bottom: 6px;">
-          <label>Time: <span id="rbn-time-value">${timeWindow}</span> min</label>
-          <input type="range" id="rbn-time-slider" min="10" max="120" step="10" value="${timeWindow}" style="width: 100%;">
+          <label>Time: <span id="rbn-time-value">${timeWindow < 1 ? (timeWindow * 60).toFixed(0) + 's' : timeWindow + 'min'}</span></label>
+          <input type="range" id="rbn-time-slider" min="0.1" max="15" step="0.1" value="${timeWindow}" style="width: 100%;">
         </div>
         <div style="margin-bottom: 6px;">
           <label>Min SNR: <span id="rbn-snr-value">${minSNR}</span> dB</label>
@@ -690,9 +690,14 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign 
 
         if (timeSlider && timeValue) {
           timeSlider.addEventListener('input', (e) => {
-            const val = e.target.value;
-            timeValue.textContent = val;
-            setTimeWindow(parseInt(val));
+            const val = parseFloat(e.target.value);
+            // Display as seconds if < 1 minute, otherwise minutes
+            if (val < 1) {
+              timeValue.textContent = (val * 60).toFixed(0) + 's';
+            } else {
+              timeValue.textContent = val.toFixed(1) + 'min';
+            }
+            setTimeWindow(val);
           });
         }
 
@@ -733,7 +738,24 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign 
         controlRef.current = null;
       }
     };
-  }, [map, enabled, stats, selectedBand, timeWindow, minSNR, showPaths, callsign]);
+  }, [map, enabled, callsign]); // Only recreate when map, enabled, or callsign changes
+
+  // Separate effect to update stats display without recreating control
+  useEffect(() => {
+    if (!enabled || !controlRef.current) return;
+    
+    const container = controlRef.current.getContainer();
+    if (!container) return;
+    
+    // Update stats in existing control
+    const statsDiv = container.querySelector('div:nth-child(2)');
+    if (statsDiv) {
+      statsDiv.innerHTML = `
+        Spots: <b>${stats.total}</b> | Skimmers: <b>${stats.skimmers}</b><br>
+        Avg SNR: <b>${stats.avgSNR} dB</b>
+      `;
+    }
+  }, [enabled, stats]);
 
   // Cleanup on disable
   useEffect(() => {
