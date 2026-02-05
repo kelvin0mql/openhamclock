@@ -384,7 +384,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
   const animationFrameRef = useRef(null);
 
   // Fetch WSPR data with dynamic time window and band filter
-  // Strip callsign suffix (e.g., VE3TOS/3 → VE3TOS, VE3TOS-4 → VE3TOS)
+  
   const stripCallsign = (call) => {
     if (!call) return '';
     return call.split(/[\/\-]/)[0].toUpperCase();
@@ -561,10 +561,10 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
             <input type="text" id="wspr-grid-input" 
               placeholder="${gridFilter || 'e.g. FN03'}" 
               value="${gridFilter || ''}"
-              maxlength="4"
+              maxlength="6"
               style="width: 100%; padding: 4px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 3px; font-family: 'JetBrains Mono', monospace; text-transform: uppercase;" />
             <div style="font-size: 9px; color: var(--text-muted); margin-top: 2px;">
-              Shows TX/RX in first 4 chars of grid
+              Prefix match: FN matches FN03, FN21, etc.
             </div>
           </div>
         `;
@@ -652,7 +652,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
       });
       if (gridInput) {
         gridInput.addEventListener('input', (e) => {
-          const value = e.target.value.toUpperCase().substring(0, 4);
+          const value = e.target.value.toUpperCase().substring(0, 6);
           e.target.value = value;
           setGridFilter(value);
           console.log('[WSPR] Grid filter value:', value);
@@ -861,15 +861,16 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
       if ((spot.snr || -30) < snrThreshold) return false;
       
       // Grid square filter (if enabled) - show ALL spots in grid, ignore callsign
-      if (filterByGrid && gridFilter && gridFilter.length === 4) {
-        const grid4 = gridFilter.toUpperCase();
-        const senderGrid4 = spot.senderGrid ? spot.senderGrid.toUpperCase().substring(0, 4) : '';
-        const receiverGrid4 = spot.receiverGrid ? spot.receiverGrid.toUpperCase().substring(0, 4) : '';
+      if (filterByGrid && gridFilter && gridFilter.length >= 2) {
+        const gridUpper = gridFilter.toUpperCase();
+        const senderGrid = spot.senderGrid ? spot.senderGrid.toUpperCase() : '';
+        const receiverGrid = spot.receiverGrid ? spot.receiverGrid.toUpperCase() : '';
         
-        const senderMatch = senderGrid4 === grid4;
-        const receiverMatch = receiverGrid4 === grid4;
+        // Match prefix: FN matches FN03, FN02, FN21, etc.
+        const senderMatch = senderGrid.startsWith(gridUpper);
+        const receiverMatch = receiverGrid.startsWith(gridUpper);
         
-        // Show if either TX or RX is in the grid square
+        // Show if either TX or RX matches the grid prefix
         return senderMatch || receiverMatch;
       }
       
@@ -1132,15 +1133,16 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
       if ((spot.snr || -30) < snrThreshold) return false;
       
       // Grid square filter (if enabled) - show ALL spots in grid, ignore callsign
-      if (filterByGrid && gridFilter && gridFilter.length === 4) {
-        const grid4 = gridFilter.toUpperCase();
-        const senderGrid4 = spot.senderGrid ? spot.senderGrid.toUpperCase().substring(0, 4) : '';
-        const receiverGrid4 = spot.receiverGrid ? spot.receiverGrid.toUpperCase().substring(0, 4) : '';
+      if (filterByGrid && gridFilter && gridFilter.length >= 2) {
+        const gridUpper = gridFilter.toUpperCase();
+        const senderGrid = spot.senderGrid ? spot.senderGrid.toUpperCase() : '';
+        const receiverGrid = spot.receiverGrid ? spot.receiverGrid.toUpperCase() : '';
         
-        const senderMatch = senderGrid4 === grid4;
-        const receiverMatch = receiverGrid4 === grid4;
+        // Match prefix: FN matches FN03, FN02, FN21, etc.
+        const senderMatch = senderGrid.startsWith(gridUpper);
+        const receiverMatch = receiverGrid.startsWith(gridUpper);
         
-        // Show if either TX or RX is in the grid square
+        // Show if either TX or RX matches the grid prefix
         return senderMatch || receiverMatch;
       }
       
