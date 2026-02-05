@@ -16,7 +16,8 @@ import {
   PropagationPanel,
   DXpeditionPanel,
   PSKReporterPanel,
-  WeatherPanel
+  WeatherPanel,
+  AnalogClockPanel
 } from './components';
 
 import { loadLayout, saveLayout, DEFAULT_LAYOUT } from './store/layoutStore.js';
@@ -122,6 +123,7 @@ export const DockableApp = ({
     'world-map': { name: 'World Map', icon: '🗺️' },
     'de-location': { name: 'DE Location', icon: '📍' },
     'dx-location': { name: 'DX Target', icon: '🎯' },
+    'analog-clock': { name: 'Analog Clock', icon: '🕐' },
     'solar': { name: 'Solar', icon: '☀️' },
     'propagation': { name: 'Propagation', icon: '📡' },
     'dx-cluster': { name: 'DX Cluster', icon: '📻' },
@@ -229,6 +231,9 @@ export const DockableApp = ({
 
       case 'dx-location':
         return renderDXLocation();
+
+      case 'analog-clock':
+        return <AnalogClockPanel currentTime={currentTime} sunTimes={deSunTimes} />;
 
       case 'solar':
         return <SolarPanel solarIndices={solarIndices} />;

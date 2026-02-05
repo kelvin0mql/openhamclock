@@ -19,7 +19,8 @@ import {
   DXpeditionPanel,
   PSKReporterPanel,
   DXNewsTicker,
-  WeatherPanel
+  WeatherPanel,
+  AnalogClockPanel
 } from './components';
 
 // Dockable layout
@@ -60,6 +61,7 @@ const App = () => {
   const [config, setConfig] = useState(loadConfig);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [showDxWeather, setShowDxWeather] = useState(true);
+  const [classicAnalogClock, setClassicAnalogClock] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [startTime] = useState(Date.now());
   const [uptime, setUptime] = useState('0d 0h 0m');
@@ -71,6 +73,7 @@ const App = () => {
       const serverCfg = await fetchServerConfig();
       if (serverCfg) {
         setShowDxWeather(serverCfg.showDxWeather !== false);
+        setClassicAnalogClock(serverCfg.classicAnalogClock === true);
       }
 
       // Load config - localStorage takes priority over server config
@@ -1315,6 +1318,13 @@ const App = () => {
                   onTempUnitChange={(unit) => { setTempUnit(unit); try { localStorage.setItem('openhamclock_tempUnit', unit); } catch {} }}
                 />
               )}
+            </div>
+          )}
+
+          {/* Analog Clock */}
+          {classicAnalogClock && (
+            <div className="panel" style={{ flex: '0 0 auto', minHeight: '200px' }}>
+              <AnalogClockPanel currentTime={currentTime} sunTimes={deSunTimes} />
             </div>
           )}
 
