@@ -697,9 +697,18 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
 
   // Proximity detection and alerts (30km radius)
   useEffect(() => {
-    if (!enabled || !window.hamclockConfig) return;
+    if (!enabled) return;
     
-    const config = window.hamclockConfig;
+    // Get config from localStorage
+    let config;
+    try {
+      const stored = localStorage.getItem('openhamclock_config');
+      if (!stored) return;
+      config = JSON.parse(stored);
+    } catch (e) {
+      return;
+    }
+    
     const stationLat = config.latitude;
     const stationLon = config.longitude;
     
@@ -761,27 +770,28 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
       return; // Already created
     }
     
-    console.log('[Lightning] Proximity: Checking for hamclockConfig...');
+    console.log('[Lightning] Proximity: Getting station config from localStorage...');
     
-    // Check if config is available, if not set a timeout to retry
-    if (!window.hamclockConfig) {
-      console.log('[Lightning] Proximity: Config not available yet, setting retry timer');
-      const retryTimer = setTimeout(() => {
-        console.log('[Lightning] Proximity: Retry timer fired, checking config again...');
-        // Force a re-check by updating a dummy state
-        if (window.hamclockConfig && !proximityControl) {
-          console.log('[Lightning] Proximity: Config now available, triggering re-render');
+    // Get config from localStorage directly (more reliable than window.hamclockConfig)
+    let config;
+    try {
+      const stored = localStorage.getItem('openhamclock_config');
+      if (stored) {
+        config = JSON.parse(stored);
+        console.log('[Lightning] Proximity: Config loaded from localStorage');
+      } else {
+        console.log('[Lightning] Proximity: No config in localStorage, setting retry timer');
+        const retryTimer = setTimeout(() => {
+          console.log('[Lightning] Proximity: Retry timer fired, triggering re-render');
           setLightningData(prev => [...prev]); // Trigger re-render
-        } else {
-          console.log('[Lightning] Proximity: Still no config or control already exists');
-        }
-      }, 2000);
-      return () => clearTimeout(retryTimer);
+        }, 2000);
+        return () => clearTimeout(retryTimer);
+      }
+    } catch (e) {
+      console.error('[Lightning] Proximity: Error reading config:', e);
+      return;
     }
     
-    console.log('[Lightning] Proximity: Config available!');
-    
-    const config = window.hamclockConfig;
     const stationLat = config.latitude;
     const stationLon = config.longitude;
     
@@ -869,14 +879,23 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
 
   // Update proximity panel content
   useEffect(() => {
-    if (!proximityControl || !window.hamclockConfig) return;
+    if (!proximityControl) return;
 
     const div = document.querySelector('.lightning-proximity');
     if (!div) return;
 
     if (!enabled || lightningData.length === 0) return;
 
-    const config = window.hamclockConfig;
+    // Get config from localStorage
+    let config;
+    try {
+      const stored = localStorage.getItem('openhamclock_config');
+      if (!stored) return;
+      config = JSON.parse(stored);
+    } catch (e) {
+      return;
+    }
+    
     const stationLat = config.latitude;
     const stationLon = config.longitude;
     
