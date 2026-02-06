@@ -3631,104 +3631,69 @@ const TLE_CACHE_DURATION = 6 * 60 * 60 * 1000; // 6 hours
 app.get('/api/satellites/tle', async (req, res) => {
   try {
     const now = Date.now();
-    
-    // Return cached data if fresh
+    // Return cached data if fresh (6-hour window)
     if (tleCache.data && (now - tleCache.timestamp) < TLE_CACHE_DURATION) {
       return res.json(tleCache.data);
     }
+
+    logDebug('[Satellites] Fetching fresh TLE data from multiple groups...');
+    const tleData = {}; // Declare this exactly once to avoid SyntaxErrors
     
-    logDebug('[Satellites] Fetching fresh TLE data...');
-    
-    // Fetch fresh TLE data from CelesTrak
-    const tleData = {};
-    
-    // Fetch amateur radio satellites TLE
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
-    
-    const response = await fetch(
-      'https://celestrak.org/NORAD/elements/gp.php?GROUP=amateur&FORMAT=tle',
-      {
-        headers: { 'User-Agent': 'OpenHamClock/3.13.1' },
-        signal: controller.signal
-      }
-    );
-    clearTimeout(timeout);
-    
-    if (response.ok) {
-      const text = await response.text();
-      const lines = text.trim().split('\n');
-      
-      // Parse TLE data (3 lines per satellite: name, line1, line2)
-      for (let i = 0; i < lines.length - 2; i += 3) {
-        const name = lines[i].trim();
-        const line1 = lines[i + 1]?.trim();
-        const line2 = lines[i + 2]?.trim();
-        
-        if (line1 && line2 && line1.startsWith('1 ') && line2.startsWith('2 ')) {
-          // Extract NORAD ID from line 1
-          const noradId = parseInt(line1.substring(2, 7));
-          
-          // Check if this is a satellite we care about
-          for (const [key, sat] of Object.entries(HAM_SATELLITES)) {
-            if (sat.norad === noradId) {
-              tleData[key] = {
-                ...sat,
-                tle1: line1,
-                tle2: line2
-              };
+
+    // This list tells the server to look in all three CelesTrak folders
+    const groups = ['amateur', 'weather', 'goes']; 
+
+    for (const group of groups) {
+      try {
+        const response = await fetch(
+          `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=tle`,
+          { headers: { 'User-Agent': 'OpenHamClock/3.3' }, signal: controller.signal }
+        );
+
+        if (response.ok) {
+          const text = await response.text();
+          const lines = text.trim().split('\n');
+          // Parse 3 lines per satellite: Name, Line 1, Line 2
+          for (let i = 0; i < lines.length - 2; i += 3) {
+            const line1 = lines[i + 1]?.trim();
+            const line2 = lines[i + 2]?.trim();
+            if (line1 && line1.startsWith('1 ')) {
+              const noradId = parseInt(line1.substring(2, 7));
+              // Check if the NORAD ID matches your definitions in HAM_SATELLITES
+              for (const [key, sat] of Object.entries(HAM_SATELLITES)) {
+                if (sat.norad === noradId) {
+                  tleData[key] = { ...sat, tle1: line1, tle2: line2 };
+                }
+              }
             }
           }
         }
+      } catch (e) {
+        logDebug(`[Satellites] Failed to fetch group: ${group}`);
       }
     }
-    
-    // Also try to get ISS specifically (it's in the stations group)
+    clearTimeout(timeout);
+
+    // Fallback for ISS if it wasn't found in the groups above
     if (!tleData['ISS']) {
       try {
-        const issController = new AbortController();
-        const issTimeout = setTimeout(() => issController.abort(), 10000);
-        
-        const issResponse = await fetch(
-          'https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=tle',
-          { 
-            headers: { 'User-Agent': 'OpenHamClock/3.13.1' },
-            signal: issController.signal
-          }
-        );
-        clearTimeout(issTimeout);
-        
-        if (issResponse.ok) {
-          const issText = await issResponse.text();
+        const issRes = await fetch('https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=tle');
+        if (issRes.ok) {
+          const issText = await issRes.text();
           const issLines = issText.trim().split('\n');
           if (issLines.length >= 3) {
-            tleData['ISS'] = {
-              ...HAM_SATELLITES['ISS'],
-              tle1: issLines[1].trim(),
-              tle2: issLines[2].trim()
-            };
-            logDebug('[Satellites] Found ISS TLE');
+            tleData['ISS'] = { ...HAM_SATELLITES['ISS'], tle1: issLines[1].trim(), tle2: issLines[2].trim() };
           }
         }
-      } catch (e) {
-        if (e.name !== 'AbortError') {
-          logErrorOnce('Satellites', `ISS TLE fetch: ${e.message}`);
-        }
-      }
+      } catch (e) { logDebug('[Satellites] ISS fallback failed'); }
     }
-    
-    // Cache the result
+
     tleCache = { data: tleData, timestamp: now };
-    
-    logDebug('[Satellites] Loaded TLE for', Object.keys(tleData).length, 'satellites');
     res.json(tleData);
-    
   } catch (error) {
-    // Don't spam logs for timeouts (AbortError) or network issues
-    if (error.name !== 'AbortError') {
-      logErrorOnce('Satellites', `TLE fetch error: ${error.message}`);
-    }
-    // Return cached data even if stale, or empty object
+    // Return stale cache or empty if everything fails
     res.json(tleCache.data || {});
   }
 });
