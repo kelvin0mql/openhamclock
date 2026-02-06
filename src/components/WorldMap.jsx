@@ -850,12 +850,13 @@ export const WorldMap = ({
       {/* DX News Ticker - left side of bottom bar */}
       {!hideOverlays && <DXNewsTicker />}
 
-      {/* Legend - right side */}
+      {/* Legend - centered above news ticker */}
       {!hideOverlays && (
       <div style={{
         position: 'absolute',
-        bottom: '8px',
-        right: '8px',
+        bottom: '44px',
+        left: '50%',
+        transform: 'translateX(-50%)',
         background: 'rgba(0, 0, 0, 0.85)',
         border: '1px solid #444',
         borderRadius: '6px',
@@ -866,8 +867,7 @@ export const WorldMap = ({
         alignItems: 'center',
         fontSize: '11px',
         fontFamily: 'JetBrains Mono, monospace',
-        flexWrap: 'nowrap',
-        maxWidth: '50%'
+        flexWrap: 'nowrap'
       }}>
         {showDXPaths && (
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
