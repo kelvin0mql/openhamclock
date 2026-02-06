@@ -2,7 +2,8 @@
  * OpenHamClock - Main Application Component
  * Amateur Radio Dashboard
  */
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 
 // Components
 import {
@@ -64,6 +65,7 @@ const App = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [startTime] = useState(Date.now());
   const [uptime, setUptime] = useState('0d 0h 0m');
+  const { t } = useTranslation();
   
   // Load server configuration on startup (only matters for first-time users)
   useEffect(() => {
@@ -725,7 +727,7 @@ const App = () => {
                   borderRadius: '4px'
                 }}
               >
-                ⚙ Settings
+                {t('app.settings')}
               </button>
               
               {/* DX Lock button overlay */}
@@ -1592,7 +1594,7 @@ const App = () => {
             padding: '2px 8px', 
             borderRadius: '4px' 
           }}>
-            Click map to set DX • 73 de {config.callsign}
+                    {t('app.callsign', {callsign: config.callsign })}
           </div>
         </div>
         
