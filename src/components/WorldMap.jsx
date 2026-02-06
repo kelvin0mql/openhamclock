@@ -2,7 +2,7 @@
  * WorldMap Component
  * Leaflet map with DE/DX markers, terminator, DX paths, POTA, satellites, PSKReporter
  */
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { MAP_STYLES } from '../utils/config.js';
 import { 
   calculateGridSquare, 
@@ -61,6 +61,12 @@ export const WorldMap = ({
   const wsjtxMarkersRef = useRef([]);
   const countriesLayerRef = useRef(null);
   const dxLockedRef = useRef(dxLocked);
+
+  // Calculate grid locator from DE location for plugins
+  const deLocator = useMemo(() => {
+    if (!deLocation?.lat || !deLocation?.lon) return '';
+    return calculateGridSquare(deLocation.lat, deLocation.lon);
+  }, [deLocation?.lat, deLocation?.lon]);
 
   // Keep dxLockedRef in sync with prop
   useEffect(() => {
@@ -786,6 +792,7 @@ export const WorldMap = ({
           opacity={pluginLayerStates[layerDef.id]?.opacity || layerDef.defaultOpacity}
           map={mapInstanceRef.current}
           callsign={callsign}
+          locator={deLocator}
         />
       ))}
       

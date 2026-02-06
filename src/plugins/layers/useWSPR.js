@@ -356,7 +356,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
   const [markerLayers, setMarkerLayers] = useState([]);
   const [heatmapLayer, setHeatmapLayer] = useState(null);
   const [wsprData, setWsprData] = useState([]);
-  const [filterByGrid, setFilterByGrid] = useState(false);
+  const [filterByGrid, setFilterByGrid] = useState(true);  // Default ON - shows activity in your grid area
   const [gridFilter, setGridFilter] = useState('');
   
   // v1.2.0 - Advanced Filters
@@ -866,7 +866,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
       // SNR filter
       if ((spot.snr || -30) < snrThreshold) return false;
       
-      // Grid square filter (if enabled) - show ALL spots in grid, ignore callsign
+      // Grid square filter (if enabled AND grid is set) - show spots in/around that grid
       if (filterByGrid && gridFilter && gridFilter.length >= 2) {
         const gridUpper = gridFilter.toUpperCase();
         const senderGrid = spot.senderGrid ? spot.senderGrid.toUpperCase() : '';
@@ -880,8 +880,13 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
         return senderMatch || receiverMatch;
       }
       
+      // If grid filter is ON but no grid set, show ALL spots (don't filter)
+      if (filterByGrid && (!gridFilter || gridFilter.length < 2)) {
+        return true;
+      }
+      
       // If grid filter is OFF, filter by callsign (TX/RX involving your station)
-      if (!filterByGrid && callsign) {
+      if (!filterByGrid && callsign && callsign !== 'N0CALL') {
         const baseCallsign = callsign.split(/[\/\-]/)[0].toUpperCase();
         const senderBase = (spot.sender || '').split(/[\/\-]/)[0].toUpperCase();
         const receiverBase = (spot.receiver || '').split(/[\/\-]/)[0].toUpperCase();
@@ -893,6 +898,8 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
       // If no callsign and no grid filter, show all
       return true;
     });
+    
+    console.log(`[WSPR Paths] Filtering: filterByGrid=${filterByGrid}, gridFilter="${gridFilter}", callsign="${callsign}", input=${wsprData.length}, output=${filteredData.length}`);
     
     // Debug: Log grid squares when filter is enabled
     if (filterByGrid && gridFilter && filteredData.length > 0) {
@@ -1255,7 +1262,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
       // SNR filter
       if ((spot.snr || -30) < snrThreshold) return false;
       
-      // Grid square filter (if enabled) - show ALL spots in grid, ignore callsign
+      // Grid square filter (if enabled AND grid is set) - show spots in/around that grid
       if (filterByGrid && gridFilter && gridFilter.length >= 2) {
         const gridUpper = gridFilter.toUpperCase();
         const senderGrid = spot.senderGrid ? spot.senderGrid.toUpperCase() : '';
@@ -1269,8 +1276,13 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
         return senderMatch || receiverMatch;
       }
       
+      // If grid filter is ON but no grid set, show ALL spots (don't filter)
+      if (filterByGrid && (!gridFilter || gridFilter.length < 2)) {
+        return true;
+      }
+      
       // If grid filter is OFF, filter by callsign (TX/RX involving your station)
-      if (!filterByGrid && callsign) {
+      if (!filterByGrid && callsign && callsign !== 'N0CALL') {
         const baseCallsign = callsign.split(/[\/\-]/)[0].toUpperCase();
         const senderBase = (spot.sender || '').split(/[\/\-]/)[0].toUpperCase();
         const receiverBase = (spot.receiver || '').split(/[\/\-]/)[0].toUpperCase();
@@ -1283,23 +1295,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
       return true;
     });
     
-    // Debug: Log grid squares when filter is enabled
-    if (filterByGrid && gridFilter && filteredData.length > 0) {
-      const grids = new Set();
-      filteredData.slice(0, 5).forEach(spot => {
-        if (spot.senderGrid) grids.add(spot.senderGrid.substring(0, 4));
-        if (spot.receiverGrid) grids.add(spot.receiverGrid.substring(0, 4));
-      });
-      console.log(`[WSPR Grid] Filtering for ${gridFilter}, found ${filteredData.length} spots with grids:`, Array.from(grids).join(', '));
-    } else if (filterByGrid && gridFilter && filteredData.length === 0) {
-      // Log what grids ARE available
-      const availableGrids = new Set();
-      wsprData.slice(0, 10).forEach(spot => {
-        if (spot.senderGrid) availableGrids.add(spot.senderGrid.substring(0, 4));
-        if (spot.receiverGrid) availableGrids.add(spot.receiverGrid.substring(0, 4));
-      });
-      console.log(`[WSPR Grid] No matches for ${gridFilter}. Available grids in data:`, Array.from(availableGrids).join(', '));
-    }
+    console.log(`[WSPR Heatmap] Filtering: filterByGrid=${filterByGrid}, gridFilter="${gridFilter}", input=${wsprData.length}, output=${filteredData.length}`);
     
     filteredData.forEach(spot => {
       if (!spot.senderLat || !spot.senderLon || !spot.receiverLat || !spot.receiverLon) return;
