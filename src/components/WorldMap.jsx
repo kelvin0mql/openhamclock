@@ -822,6 +822,9 @@ export const WorldMap = ({
 		    enabled={pluginLayerStates[layerDef.id]?.enabled ?? layerDef.defaultEnabled}
 		    opacity={pluginLayerStates[layerDef.id]?.opacity ?? layerDef.defaultOpacity}
 		    map={mapInstanceRef.current}
+		    callsign={callsign}
+		    locator={deLocator}
+		    lowMemoryMode={lowMemoryMode}
 		  />
 		))}
       //  MODIS SLIDER CODE HERE 
