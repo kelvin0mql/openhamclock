@@ -65,6 +65,96 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 
 // ============================================
+// UPSTREAM REQUEST MANAGER
+// Prevents request stampedes on external APIs:
+// 1. In-flight deduplication — only 1 fetch per cache key at a time
+// 2. Stale-while-revalidate — serve stale data instantly, refresh in background
+// 3. Exponential backoff with jitter per service
+// ============================================
+class UpstreamManager {
+  constructor() {
+    this.inFlight = new Map();  // cacheKey -> Promise
+    this.backoffs = new Map();  // serviceName -> { until, consecutive }
+  }
+
+  /**
+   * Check if a service is in backoff period
+   * @returns {boolean}
+   */
+  isBackedOff(service) {
+    const b = this.backoffs.get(service);
+    return b && Date.now() < b.until;
+  }
+
+  /**
+   * Get remaining backoff seconds for logging
+   */
+  backoffRemaining(service) {
+    const b = this.backoffs.get(service);
+    if (!b || Date.now() >= b.until) return 0;
+    return Math.round((b.until - Date.now()) / 1000);
+  }
+
+  /**
+   * Record a failure — applies exponential backoff with jitter
+   * @param {string} service - Service name (e.g. 'pskreporter', 'wspr', 'weather')
+   * @param {number} statusCode - HTTP status that caused the failure
+   */
+  recordFailure(service, statusCode) {
+    const prev = this.backoffs.get(service) || { consecutive: 0 };
+    const consecutive = prev.consecutive + 1;
+    
+    // Base delays by status: 429=aggressive, 503=moderate, other=short
+    const baseDelay = statusCode === 429 ? 60000 : statusCode === 503 ? 30000 : 15000;
+    
+    // Exponential: 30s, 60s, 120s, 240s... capped at 30 minutes
+    const delay = Math.min(30 * 60 * 1000, baseDelay * Math.pow(2, consecutive - 1));
+    
+    // Add 0-15s jitter to prevent synchronized retries across instances
+    const jitter = Math.random() * 15000;
+    
+    this.backoffs.set(service, { 
+      until: Date.now() + delay + jitter, 
+      consecutive 
+    });
+    
+    return Math.round((delay + jitter) / 1000);
+  }
+
+  /**
+   * Record a success — resets backoff for the service
+   */
+  recordSuccess(service) {
+    this.backoffs.delete(service);
+  }
+
+  /**
+   * Deduplicated fetch — if an identical request is already in-flight,
+   * all callers share the same Promise instead of each hitting upstream.
+   * 
+   * @param {string} cacheKey - Unique key for this request
+   * @param {Function} fetchFn - async function that performs the actual upstream fetch
+   * @returns {Promise} - Resolves with fetch result, or rejects on error
+   */
+  async fetch(cacheKey, fetchFn) {
+    // If this exact request is already in-flight, piggyback on it
+    if (this.inFlight.has(cacheKey)) {
+      return this.inFlight.get(cacheKey);
+    }
+
+    // Create the promise and store it so concurrent callers can share it
+    const promise = fetchFn().finally(() => {
+      this.inFlight.delete(cacheKey);
+    });
+
+    this.inFlight.set(cacheKey, promise);
+    return promise;
+  }
+}
+
+const upstream = new UpstreamManager();
+
+// ============================================
 // CONFIGURATION FROM ENVIRONMENT
 // ============================================
 
@@ -3347,40 +3437,36 @@ app.get('/api/pskreporter/config', (req, res) => {
 // Uses the traditional retrieve API with caching
 let pskHttpCache = {};
 const PSK_HTTP_CACHE_TTL = 10 * 60 * 1000; // 10 minutes - PSKReporter rate limits aggressively
-let psk503Backoff = 0; // Timestamp when we can try again after 503
+const PSK_HTTP_STALE_TTL = 60 * 60 * 1000; // Serve stale data up to 1 hour
 
 app.get('/api/pskreporter/http/:callsign', async (req, res) => {
   const callsign = req.params.callsign.toUpperCase();
   const minutes = parseInt(req.query.minutes) || 30;
   const direction = req.query.direction || 'tx'; // tx or rx
-  // flowStartSeconds must be NEGATIVE for "last N seconds"
   const flowStartSeconds = -Math.abs(minutes * 60);
   
-  const cacheKey = `${direction}:${callsign}:${minutes}`;
+  const cacheKey = `psk:${direction}:${callsign}:${minutes}`;
   const now = Date.now();
   
-  // Check cache first
+  // 1. Fresh cache hit — serve immediately
   if (pskHttpCache[cacheKey] && (now - pskHttpCache[cacheKey].timestamp) < PSK_HTTP_CACHE_TTL) {
     return res.json({ ...pskHttpCache[cacheKey].data, cached: true });
   }
   
-  // If we're in 503 backoff period, return cached data or empty result
-  if (psk503Backoff > now) {
+  // 2. Backoff active — serve stale or empty
+  if (upstream.isBackedOff('pskreporter')) {
     if (pskHttpCache[cacheKey]) {
       return res.json({ ...pskHttpCache[cacheKey].data, cached: true, stale: true });
     }
-    return res.json({ 
-      callsign, 
-      direction, 
-      count: 0, 
-      reports: [],
-      backoff: true
-    });
+    return res.json({ callsign, direction, count: 0, reports: [], backoff: true });
   }
   
-  try {
+  // 3. Stale cache exists — serve it immediately, refresh in background (stale-while-revalidate)
+  const hasStale = pskHttpCache[cacheKey] && (now - pskHttpCache[cacheKey].timestamp) < PSK_HTTP_STALE_TTL;
+  
+  // 4. Deduplicated upstream fetch — only 1 in-flight request per cache key
+  const doFetch = () => upstream.fetch(cacheKey, async () => {
     const param = direction === 'tx' ? 'senderCallsign' : 'receiverCallsign';
-    // Add appcontact parameter as requested by PSKReporter developer docs
     const url = `https://retrieve.pskreporter.info/query?${param}=${encodeURIComponent(callsign)}&flowStartSeconds=${flowStartSeconds}&rronly=1&appcontact=openhamclock`;
     
     const controller = new AbortController();
@@ -3388,7 +3474,7 @@ app.get('/api/pskreporter/http/:callsign', async (req, res) => {
     
     const response = await fetch(url, {
       headers: { 
-        'User-Agent': 'OpenHamClock/15.0.2 (Amateur Radio Dashboard)',
+        'User-Agent': 'OpenHamClock/15.1.1 (Amateur Radio Dashboard)',
         'Accept': '*/*'
       },
       signal: controller.signal
@@ -3396,21 +3482,14 @@ app.get('/api/pskreporter/http/:callsign', async (req, res) => {
     clearTimeout(timeout);
     
     if (!response.ok) {
-      // Back off on rate-limit or access errors to avoid hammering
-      if (response.status === 503) {
-        psk503Backoff = Date.now() + (15 * 60 * 1000);
-        logErrorOnce('PSKReporter HTTP', '503 - backing off for 15 minutes');
-      } else if (response.status === 403 || response.status === 429) {
-        psk503Backoff = Date.now() + (30 * 60 * 1000);
-        logErrorOnce('PSKReporter HTTP', `${response.status} - backing off for 30 minutes (server-side HTTP proxy blocked; users unaffected via MQTT)`);
-      }
+      const backoffSecs = upstream.recordFailure('pskreporter', response.status);
+      logErrorOnce('PSKReporter HTTP', `${response.status} — backing off for ${backoffSecs}s`);
       throw new Error(`HTTP ${response.status}`);
     }
     
     const xml = await response.text();
     const reports = [];
     
-    // Parse XML response
     const reportRegex = /<receptionReport[^>]*>/g;
     let match;
     while ((match = reportRegex.exec(xml)) !== null) {
@@ -3451,11 +3530,8 @@ app.get('/api/pskreporter/http/:callsign', async (req, res) => {
       }
     }
     
-    // Sort by timestamp (newest first)
     reports.sort((a, b) => b.timestamp - a.timestamp);
-    
-    // Clear backoff on success
-    psk503Backoff = 0;
+    upstream.recordSuccess('pskreporter');
     
     const result = {
       callsign,
@@ -3466,30 +3542,29 @@ app.get('/api/pskreporter/http/:callsign', async (req, res) => {
       source: 'http'
     };
     
-    // Cache it
-    pskHttpCache[cacheKey] = { data: result, timestamp: now };
-    
+    pskHttpCache[cacheKey] = { data: result, timestamp: Date.now() };
     logDebug(`[PSKReporter HTTP] Found ${reports.length} ${direction} reports for ${callsign}`);
+    return result;
+  });
+  
+  if (hasStale) {
+    // Stale-while-revalidate: respond with stale data now, refresh in background
+    doFetch().catch(() => {}); // fire-and-forget background refresh
+    return res.json({ ...pskHttpCache[cacheKey].data, cached: true, stale: true });
+  }
+  
+  // No stale data — must wait for upstream
+  try {
+    const result = await doFetch();
     res.json(result);
-    
   } catch (error) {
-    // Don't re-log 403/503 errors - already logged above with backoff info
     if (!error.message?.includes('HTTP 403') && !error.message?.includes('HTTP 503')) {
       logErrorOnce('PSKReporter HTTP', error.message);
     }
-    
-    // Return cached data if available (without error flag)
     if (pskHttpCache[cacheKey]) {
       return res.json({ ...pskHttpCache[cacheKey].data, cached: true, stale: true });
     }
-    
-    // Return empty result without error flag for rate limiting
-    res.json({ 
-      callsign, 
-      direction, 
-      count: 0, 
-      reports: []
-    });
+    res.json({ callsign, direction, count: 0, reports: [] });
   }
 });
 
@@ -3852,7 +3927,8 @@ app.get('/api/rbn', async (req, res) => {
 // WSPR heatmap endpoint - gets global propagation data
 // Uses PSK Reporter to fetch WSPR mode spots from the last N minutes
 let wsprCache = { data: null, timestamp: 0 };
-const WSPR_CACHE_TTL = 10 * 60 * 1000; // 10 minutes cache - be kind to PSKReporter
+const WSPR_CACHE_TTL = 10 * 60 * 1000;  // 10 minutes cache - be kind to PSKReporter
+const WSPR_STALE_TTL = 60 * 60 * 1000;  // Serve stale data up to 1 hour
 
 // Aggregate WSPR spots by 4-character grid square for bandwidth efficiency
 // Reduces payload from ~2MB to ~50KB while preserving heatmap visualization
@@ -3989,23 +4065,35 @@ function aggregateWSPRByGrid(spots) {
 }
 
 app.get('/api/wspr/heatmap', async (req, res) => {
-  const minutes = parseInt(req.query.minutes) || 30; // Default 30 minutes
-  const band = req.query.band || 'all'; // all, 20m, 40m, etc.
-  const raw = req.query.raw === 'true'; // Return raw spots instead of aggregated
+  const minutes = parseInt(req.query.minutes) || 30;
+  const band = req.query.band || 'all';
+  const raw = req.query.raw === 'true';
   const now = Date.now();
   
-  // Return cached data if fresh
-  const cacheKey = `${minutes}:${band}:${raw ? 'raw' : 'agg'}`;
+  // Cache key for this exact query
+  const cacheKey = `wspr:${minutes}:${band}:${raw ? 'raw' : 'agg'}`;
+  
+  // 1. Fresh cache hit — serve immediately
   if (wsprCache.data && 
       wsprCache.data.cacheKey === cacheKey && 
       (now - wsprCache.timestamp) < WSPR_CACHE_TTL) {
     return res.json({ ...wsprCache.data.result, cached: true });
   }
   
-  try {
+  // 2. Backoff active (WSPR uses PSKReporter upstream, shares its backoff)
+  if (upstream.isBackedOff('pskreporter')) {
+    if (wsprCache.data && wsprCache.data.cacheKey === cacheKey) {
+      return res.json({ ...wsprCache.data.result, cached: true, stale: true });
+    }
+    return res.json({ grids: [], paths: [], totalSpots: 0, minutes, band, format: 'aggregated', backoff: true });
+  }
+  
+  // 3. Stale-while-revalidate: if stale data exists, serve it and refresh in background
+  const hasStale = wsprCache.data && wsprCache.data.cacheKey === cacheKey && (now - wsprCache.timestamp) < WSPR_STALE_TTL;
+  
+  // 4. Deduplicated upstream fetch — WSPR is global data, so all users share ONE in-flight request
+  const doFetch = () => upstream.fetch(cacheKey, async () => {
     const flowStartSeconds = -Math.abs(minutes * 60);
-    // Query PSK Reporter for WSPR mode spots (no specific callsign filter)
-    // Get data from multiple popular WSPR frequencies to build heatmap
     const url = `https://retrieve.pskreporter.info/query?mode=WSPR&flowStartSeconds=${flowStartSeconds}&rronly=1&nolocator=0&appcontact=openhamclock&rptlimit=2000`;
     
     const controller = new AbortController();
@@ -4013,7 +4101,7 @@ app.get('/api/wspr/heatmap', async (req, res) => {
     
     const response = await fetch(url, {
       headers: { 
-        'User-Agent': 'OpenHamClock/3.14.24 (Amateur Radio Dashboard)',
+        'User-Agent': 'OpenHamClock/15.1.1 (Amateur Radio Dashboard)',
         'Accept': '*/*'
       },
       signal: controller.signal
@@ -4021,13 +4109,14 @@ app.get('/api/wspr/heatmap', async (req, res) => {
     clearTimeout(timeout);
     
     if (!response.ok) {
+      const backoffSecs = upstream.recordFailure('pskreporter', response.status);
+      logErrorOnce('WSPR Heatmap', `HTTP ${response.status} — backing off for ${backoffSecs}s`);
       throw new Error(`HTTP ${response.status}`);
     }
     
     const xml = await response.text();
     const spots = [];
     
-    // Parse XML response
     const reportRegex = /<receptionReport[^>]*>/g;
     let match;
     while ((match = reportRegex.exec(xml)) !== null) {
@@ -4055,7 +4144,6 @@ app.get('/api/wspr/heatmap', async (req, res) => {
         const freq = frequency ? parseInt(frequency) : null;
         const spotBand = freq ? getBandFromHz(freq) : 'Unknown';
         
-        // Filter by band if specified
         if (band !== 'all' && spotBand !== band) continue;
         
         const senderLoc = gridToLatLonSimple(senderLocator);
@@ -4094,63 +4182,45 @@ app.get('/api/wspr/heatmap', async (req, res) => {
       }
     }
     
-    // Sort by timestamp (newest first)
     spots.sort((a, b) => b.timestamp - a.timestamp);
+    upstream.recordSuccess('pskreporter');
     
     let result;
-    
     if (raw) {
-      // Return raw spots (legacy format, higher bandwidth)
       result = {
-        count: spots.length,
-        spots: spots,
-        minutes: minutes,
-        band: band,
-        timestamp: new Date().toISOString(),
-        source: 'pskreporter',
-        format: 'raw'
+        count: spots.length, spots, minutes, band,
+        timestamp: new Date().toISOString(), source: 'pskreporter', format: 'raw'
       };
       console.log(`[WSPR Heatmap] Returning ${spots.length} raw spots (${minutes}min, band: ${band})`);
     } else {
-      // Return aggregated data (default, ~97% smaller)
       const aggregated = aggregateWSPRByGrid(spots);
       result = {
-        ...aggregated,
-        minutes: minutes,
-        band: band,
-        timestamp: new Date().toISOString(),
-        source: 'pskreporter',
-        format: 'aggregated'
+        ...aggregated, minutes, band,
+        timestamp: new Date().toISOString(), source: 'pskreporter', format: 'aggregated'
       };
       console.log(`[WSPR Heatmap] Aggregated ${spots.length} spots → ${aggregated.uniqueGrids} grids, ${aggregated.paths.length} paths (${minutes}min, band: ${band})`);
     }
     
-    // Cache it
-    wsprCache = { 
-      data: { result, cacheKey }, 
-      timestamp: now 
-    };
-    
+    wsprCache = { data: { result, cacheKey }, timestamp: Date.now() };
+    return result;
+  });
+  
+  if (hasStale) {
+    // Stale-while-revalidate: respond with stale data now, refresh in background
+    doFetch().catch(() => {});
+    return res.json({ ...wsprCache.data.result, cached: true, stale: true });
+  }
+  
+  // No stale data — must wait for upstream
+  try {
+    const result = await doFetch();
     res.json(result);
-    
   } catch (error) {
     logErrorOnce('WSPR Heatmap', error.message);
-    
-    // Return cached data if available
     if (wsprCache.data && wsprCache.data.cacheKey === cacheKey) {
       return res.json({ ...wsprCache.data.result, cached: true, stale: true });
     }
-    
-    // Return empty result
-    res.json({ 
-      grids: [],
-      paths: [],
-      totalSpots: 0,
-      minutes,
-      band,
-      format: 'aggregated',
-      error: error.message 
-    });
+    res.json({ grids: [], paths: [], totalSpots: 0, minutes, band, format: 'aggregated', error: error.message });
   }
 });
 
@@ -6207,6 +6277,31 @@ function generateStatusDashboard() {
       ` : '<div style="color: #666; text-align: center; padding: 20px">No API requests recorded yet</div>'}
     </div>
     
+    <div class="api-section">
+      <h2>🔗 Upstream Services</h2>
+      <table>
+        <thead><tr><th>Service</th><th>Status</th><th>Backoff</th><th>Consecutive Failures</th><th>In-Flight</th></tr></thead>
+        <tbody>
+          ${['pskreporter', 'openmeteo'].map(svc => {
+            const backedOff = upstream.isBackedOff(svc);
+            const remaining = upstream.backoffRemaining(svc);
+            const consecutive = upstream.backoffs.get(svc)?.consecutive || 0;
+            const prefix = svc === 'pskreporter' ? ['psk:', 'wspr:'] : ['weather:'];
+            const inFlight = [...upstream.inFlight.keys()].filter(k => prefix.some(p => k.startsWith(p))).length;
+            const label = svc === 'pskreporter' ? 'PSKReporter (PSK + WSPR)' : 'Open-Meteo (Weather)';
+            return `<tr>
+              <td>${label}</td>
+              <td style="color: ${backedOff ? '#ff4444' : '#00ff88'}">${backedOff ? '⛔ Backoff' : '✅ OK'}</td>
+              <td>${backedOff ? remaining + 's' : '—'}</td>
+              <td>${consecutive || '—'}</td>
+              <td>${inFlight}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      <p style="font-size: 11px; color: #888; margin-top: 8px">Total in-flight deduped requests: ${upstream.inFlight.size}</p>
+    </div>
+    
     <div class="footer">
       <div>🔧 Built with ❤️ for Amateur Radio</div>
       <div style="margin-top: 8px">
@@ -6272,6 +6367,21 @@ app.get('/api/health', (req, res) => {
         totalBytesFormatted: formatBytes(apiStats.totalBytes),
         estimatedMonthlyGB: ((apiStats.totalBytes / parseFloat(apiStats.uptimeHours)) * 24 * 30 / (1024 * 1024 * 1024)).toFixed(2),
         endpoints: apiStats.endpoints.slice(0, 20) // Top 20 by bandwidth
+      },
+      upstream: {
+        pskreporter: {
+          status: upstream.isBackedOff('pskreporter') ? 'backoff' : 'ok',
+          backoffRemaining: upstream.backoffRemaining('pskreporter'),
+          consecutive: upstream.backoffs.get('pskreporter')?.consecutive || 0,
+          inFlightRequests: [...upstream.inFlight.keys()].filter(k => k.startsWith('psk:') || k.startsWith('wspr:')).length
+        },
+        openmeteo: {
+          status: upstream.isBackedOff('openmeteo') ? 'backoff' : 'ok',
+          backoffRemaining: upstream.backoffRemaining('openmeteo'),
+          consecutive: upstream.backoffs.get('openmeteo')?.consecutive || 0,
+          inFlightRequests: [...upstream.inFlight.keys()].filter(k => k.startsWith('weather:')).length
+        },
+        totalInFlight: upstream.inFlight.size
       }
     });
   } else {
@@ -6361,8 +6471,6 @@ app.get('/api/config', (req, res) => {
 const weatherCache = new Map(); // key: "lat,lon" → { data, timestamp }
 const WEATHER_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 const WEATHER_STALE_TTL = 60 * 60 * 1000; // Serve stale data up to 1 hour if upstream is down
-let weatherRateLimited = false;
-let weatherRateLimitedUntil = 0;
 
 app.get('/api/weather', async (req, res) => {
   const lat = parseFloat(req.query.lat);
@@ -6372,28 +6480,32 @@ app.get('/api/weather', async (req, res) => {
     return res.status(400).json({ error: 'lat and lon required' });
   }
   
-  // Round to 1 decimal place to bucket nearby locations
+  // Round to 1 decimal place to bucket nearby locations (~11km grid)
   const roundedLat = Math.round(lat * 10) / 10;
   const roundedLon = Math.round(lon * 10) / 10;
-  const cacheKey = `${roundedLat},${roundedLon}`;
+  const cacheKey = `weather:${roundedLat},${roundedLon}`;
   
-  // Check cache
   const cached = weatherCache.get(cacheKey);
   const now = Date.now();
   
+  // 1. Fresh cache hit
   if (cached && (now - cached.timestamp) < WEATHER_CACHE_TTL) {
     return res.json(cached.data);
   }
   
-  // If we're rate-limited, serve stale cache or return error
-  if (weatherRateLimited && now < weatherRateLimitedUntil) {
+  // 2. Backoff active — serve stale or error
+  if (upstream.isBackedOff('openmeteo')) {
     if (cached && (now - cached.timestamp) < WEATHER_STALE_TTL) {
       return res.json(cached.data);
     }
     return res.status(429).json({ error: 'Weather API rate limited, try again later' });
   }
   
-  try {
+  // 3. Stale-while-revalidate
+  const hasStale = cached && (now - cached.timestamp) < WEATHER_STALE_TTL;
+  
+  // 4. Deduplicated upstream fetch — users at same ~11km grid share one request
+  const doFetch = () => upstream.fetch(cacheKey, async () => {
     const params = [
       `latitude=${roundedLat}`,
       `longitude=${roundedLon}`,
@@ -6412,36 +6524,44 @@ app.get('/api/weather', async (req, res) => {
     const response = await fetch(url, { timeout: 10000 });
     
     if (response.status === 429) {
-      weatherRateLimited = true;
-      weatherRateLimitedUntil = now + 60 * 60 * 1000; // Back off for 1 hour
-      logErrorOnce('Weather', 'Open-Meteo rate limited (429) — backing off for 1 hour');
-      
-      if (cached && (now - cached.timestamp) < WEATHER_STALE_TTL) {
-        return res.json(cached.data);
-      }
-      return res.status(429).json({ error: 'Weather API daily limit exceeded' });
+      const backoffSecs = upstream.recordFailure('openmeteo', 429);
+      logErrorOnce('Weather', `Open-Meteo rate limited (429) — backing off for ${backoffSecs}s`);
+      throw new Error('Rate limited');
     }
     
     if (!response.ok) {
-      throw new Error(`Open-Meteo returned ${response.status}`);
+      const backoffSecs = upstream.recordFailure('openmeteo', response.status);
+      logErrorOnce('Weather', `Open-Meteo returned ${response.status} — backing off for ${backoffSecs}s`);
+      throw new Error(`HTTP ${response.status}`);
     }
     
     const data = await response.json();
-    weatherCache.set(cacheKey, { data, timestamp: now });
-    weatherRateLimited = false;
+    upstream.recordSuccess('openmeteo');
+    weatherCache.set(cacheKey, { data, timestamp: Date.now() });
     
     // Prune old cache entries periodically (keep cache under 500 entries)
     if (weatherCache.size > 500) {
-      const cutoff = now - WEATHER_STALE_TTL;
+      const cutoff = Date.now() - WEATHER_STALE_TTL;
       for (const [key, entry] of weatherCache) {
         if (entry.timestamp < cutoff) weatherCache.delete(key);
       }
     }
     
+    return data;
+  });
+  
+  if (hasStale) {
+    // Stale-while-revalidate: respond with stale data now, refresh in background
+    doFetch().catch(() => {});
+    return res.json(cached.data);
+  }
+  
+  // No stale data — must wait for upstream
+  try {
+    const data = await doFetch();
     res.json(data);
   } catch (err) {
     logErrorOnce('Weather', `Proxy error: ${err.message}`);
-    // Serve stale cache on error
     if (cached && (now - cached.timestamp) < WEATHER_STALE_TTL) {
       return res.json(cached.data);
     }
