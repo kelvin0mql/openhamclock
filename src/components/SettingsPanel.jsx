@@ -122,7 +122,8 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
       'lightning': ['lightning-stats-position', 'lightning-proximity-position'],
       'wspr': ['wspr-filter-position', 'wspr-stats-position', 'wspr-legend-position', 'wspr-chart-position'],
       'rbn': ['rbn-panel-position'],
-      'grayline': ['grayline-position']
+      'grayline': ['grayline-position'],
+      'n3fjp_logged_qsos': ['n3fjp-position']
     };
 
     const keys = storageKeys[layerId] || [];
