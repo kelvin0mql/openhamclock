@@ -2,7 +2,7 @@
 
 All notable changes to OpenHamClock will be documented in this file.
 
-## [15.1.6] - 2026-02-09
+## [15.1.7] - 2026-02-09
 
 ### Added
 - **Upstream Request Manager** — New `UpstreamManager` class prevents request stampedes on external APIs. Three-layer protection: (1) in-flight request deduplication — 50 concurrent users trigger 1 upstream fetch, not 50; (2) stale-while-revalidate — serve cached data instantly while refreshing in background; (3) exponential backoff with jitter per service. Applied to PSKReporter HTTP, WSPR Heatmap, and weather endpoints
@@ -22,6 +22,10 @@ All notable changes to OpenHamClock will be documented in this file.
 - **"vite: not found" after update (#284)** — `npm install` skips devDependencies when `NODE_ENV=production` is set, leaving `vite` and `vitest` uninstalled. Three fixes: (1) all npm scripts now use `npx vite`/`npx vitest` which auto-resolves from `node_modules/.bin`; (2) `update.sh`, `setup-pi.sh`, and `setup-linux.sh` now use `npm install --include=dev` to force devDependency installation regardless of NODE_ENV; (3) `prestart` build step no longer runs tests — `npm start` just builds and starts, tests are separate via `npm test`
 - **VOACAP heatmap blocks DX click** — Heatmap grid rectangles had `interactive: true` with popup bindings, which consumed map clicks before they could reach the DX-setting handler. Set to `interactive: false` so clicks pass through. The color-coded grid with legend still communicates propagation reliability visually
 - **README/docs cleanup** — Corrected OpenWeatherMap description (only needed for cloud layer overlay, not weather data). Added "Can't find `.env`?" guidance box with instructions for showing hidden files on Linux/Pi/Mac. Added FAQ entry about `.env` location. Weather data sources section updated to reflect NWS + Open-Meteo architecture
+- **PSK-MQTT "Connection closed" subscribe spam** — When the MQTT broker connection dropped, a race condition caused `pskMqtt.connected` to still be `true` while the socket was dead. Incoming SSE clients would call `subscribeCallsign()`, which passed the connected check but got "Connection closed" callbacks — one error per callsign, flooding the log with 40+ lines. Fix: suppress expected "Connection closed" errors (reconnect handler re-subscribes all callsigns anyway), and batch all reconnect subscriptions into a single MQTT subscribe call instead of individual calls per callsign
+
+### Removed
+- **PSKReporter HTTP backfill** — Removed the `/api/pskreporter/http/:callsign` endpoint and all client-side `fetchHistorical()` code. With 2,000+ concurrent users, every new SSE connection triggered 2 HTTP requests to PSKReporter's retrieve API (TX + RX), causing constant 503 errors and backoff. The backoff was shared with the WSPR heatmap endpoint, so PSK failures were taking WSPR down too. The SSE connected event already delivers up to 500 recent spots from the server's MQTT buffer — no HTTP backfill needed. Net effect: zero HTTP requests to PSKReporter for live spot data, cleaner upstream status on health dashboard
 - **WSPR Heatmap had zero backoff** — PSKReporter 503 responses were ignored; WSPR kept hammering on every 2-min poll. Now shares PSKReporter's exponential backoff via UpstreamManager
 - **Open-Meteo rate limit exhaustion** — 50+ users × 2 locations × 15-min poll ≈ 9,600 req/day, right at free tier limit. US traffic now routed to NWS (unlimited). Remaining international: 2-hr cache + dedup eliminates concurrent duplicates. Estimated Open-Meteo usage: <500/day
 

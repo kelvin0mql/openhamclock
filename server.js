@@ -3578,185 +3578,23 @@ app.get('/api/pskreporter/config', (req, res) => {
   });
 });
 
-// Fallback HTTP endpoint for when MQTT isn't available
-// Uses the traditional retrieve API with caching
-let pskHttpCache = {};
-const PSK_HTTP_CACHE_TTL = 10 * 60 * 1000; // 10 minutes - PSKReporter rate limits aggressively
-const PSK_HTTP_STALE_TTL = 60 * 60 * 1000; // Serve stale data up to 1 hour
-
-app.get('/api/pskreporter/http/:callsign', async (req, res) => {
-  const callsign = req.params.callsign.toUpperCase();
-  const minutes = parseInt(req.query.minutes) || 30;
-  const direction = req.query.direction || 'tx'; // tx or rx
-  const flowStartSeconds = -Math.abs(minutes * 60);
-  
-  const cacheKey = `psk:${direction}:${callsign}:${minutes}`;
-  const now = Date.now();
-  
-  // 1. Fresh cache hit — serve immediately
-  if (pskHttpCache[cacheKey] && (now - pskHttpCache[cacheKey].timestamp) < PSK_HTTP_CACHE_TTL) {
-    return res.json({ ...pskHttpCache[cacheKey].data, cached: true });
-  }
-  
-  // 2. Backoff active — serve stale or empty
-  if (upstream.isBackedOff('pskreporter')) {
-    if (pskHttpCache[cacheKey]) {
-      return res.json({ ...pskHttpCache[cacheKey].data, cached: true, stale: true });
-    }
-    return res.json({ callsign, direction, count: 0, reports: [], backoff: true });
-  }
-  
-  // 3. Stale cache exists — serve it immediately, refresh in background (stale-while-revalidate)
-  const hasStale = pskHttpCache[cacheKey] && (now - pskHttpCache[cacheKey].timestamp) < PSK_HTTP_STALE_TTL;
-  
-  // 4. Deduplicated upstream fetch — only 1 in-flight request per cache key
-  const doFetch = () => upstream.fetch(cacheKey, async () => {
-    const param = direction === 'tx' ? 'senderCallsign' : 'receiverCallsign';
-    const url = `https://retrieve.pskreporter.info/query?${param}=${encodeURIComponent(callsign)}&flowStartSeconds=${flowStartSeconds}&rronly=1&appcontact=openhamclock`;
-    
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
-    
-    const response = await fetch(url, {
-      headers: { 
-        'User-Agent': 'OpenHamClock/15.1.6 (Amateur Radio Dashboard)',
-        'Accept': '*/*'
-      },
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    
-    if (!response.ok) {
-      const backoffSecs = upstream.recordFailure('pskreporter', response.status);
-      logErrorOnce('PSKReporter HTTP', `${response.status} — backing off for ${backoffSecs}s`);
-      throw new Error(`HTTP ${response.status}`);
-    }
-    
-    const xml = await response.text();
-    const reports = [];
-    
-    const reportRegex = /<receptionReport[^>]*>/g;
-    let match;
-    while ((match = reportRegex.exec(xml)) !== null) {
-      const report = match[0];
-      const getAttr = (name) => {
-        const m = report.match(new RegExp(`${name}="([^"]*)"`));
-        return m ? m[1] : null;
-      };
-      
-      const receiverCallsign = getAttr('receiverCallsign');
-      const receiverLocator = getAttr('receiverLocator');
-      const senderCallsign = getAttr('senderCallsign');
-      const senderLocator = getAttr('senderLocator');
-      const frequency = getAttr('frequency');
-      const mode = getAttr('mode');
-      const flowStartSecs = getAttr('flowStartSeconds');
-      const sNR = getAttr('sNR');
-      
-      if (receiverCallsign && senderCallsign) {
-        const locator = direction === 'tx' ? receiverLocator : senderLocator;
-        const loc = locator ? gridToLatLonSimple(locator) : null;
-        
-        reports.push({
-          sender: senderCallsign,
-          senderGrid: senderLocator,
-          receiver: receiverCallsign,
-          receiverGrid: receiverLocator,
-          freq: frequency ? parseInt(frequency) : null,
-          freqMHz: frequency ? (parseInt(frequency) / 1000000).toFixed(3) : null,
-          band: frequency ? getBandFromHz(parseInt(frequency)) : 'Unknown',
-          mode: mode || 'Unknown',
-          timestamp: flowStartSecs ? parseInt(flowStartSecs) * 1000 : Date.now(),
-          snr: sNR ? parseInt(sNR) : null,
-          lat: loc?.lat,
-          lon: loc?.lon,
-          age: flowStartSecs ? Math.floor((Date.now() / 1000 - parseInt(flowStartSecs)) / 60) : 0
-        });
-      }
-    }
-    
-    reports.sort((a, b) => b.timestamp - a.timestamp);
-    upstream.recordSuccess('pskreporter');
-    
-    const result = {
-      callsign,
-      direction,
-      count: reports.length,
-      reports: reports.slice(0, 500),
-      timestamp: new Date().toISOString(),
-      source: 'http'
-    };
-    
-    pskHttpCache[cacheKey] = { data: result, timestamp: Date.now() };
-    logDebug(`[PSKReporter HTTP] Found ${reports.length} ${direction} reports for ${callsign}`);
-    return result;
-  });
-  
-  if (hasStale) {
-    // Stale-while-revalidate: respond with stale data now, refresh in background
-    doFetch().catch(() => {}); // fire-and-forget background refresh
-    return res.json({ ...pskHttpCache[cacheKey].data, cached: true, stale: true });
-  }
-  
-  // No stale data — must wait for upstream
-  try {
-    const result = await doFetch();
-    res.json(result);
-  } catch (error) {
-    if (!error.message?.includes('HTTP 403') && !error.message?.includes('HTTP 503')) {
-      logErrorOnce('PSKReporter HTTP', error.message);
-    }
-    if (pskHttpCache[cacheKey]) {
-      return res.json({ ...pskHttpCache[cacheKey].data, cached: true, stale: true });
-    }
-    res.json({ callsign, direction, count: 0, reports: [] });
-  }
-});
-
-// Combined endpoint that returns HTTP-fetched data + stream info
+// Combined endpoint - returns stream info (live spots via SSE, no HTTP backfill)
 app.get('/api/pskreporter/:callsign', async (req, res) => {
   const callsign = req.params.callsign.toUpperCase();
-  const minutes = parseInt(req.query.minutes) || 30;
   
-  // For now, redirect to HTTP endpoint for historical data
-  // Live spots come via /api/pskreporter/stream/:callsign (SSE)
-  try {
-    const [txRes, rxRes] = await Promise.allSettled([
-      fetch(`http://localhost:${PORT}/api/pskreporter/http/${callsign}?minutes=${minutes}&direction=tx`),
-      fetch(`http://localhost:${PORT}/api/pskreporter/http/${callsign}?minutes=${minutes}&direction=rx`)
-    ]);
-    
-    let txData = { count: 0, reports: [] };
-    let rxData = { count: 0, reports: [] };
-    
-    if (txRes.status === 'fulfilled' && txRes.value.ok) {
-      txData = await txRes.value.json();
+  res.json({
+    callsign,
+    stream: {
+      endpoint: `/api/pskreporter/stream/${callsign}`,
+      type: 'text/event-stream',
+      hint: 'Connect to SSE stream for real-time spots. Initial spots delivered on connect event.'
+    },
+    mqtt: {
+      status: pskMqtt.connected ? 'connected' : 'disconnected',
+      activeCallsigns: pskMqtt.subscribedCalls.size,
+      sseClients: Array.from(pskMqtt.subscribers.values()).reduce((s, c) => s + c.size, 0)
     }
-    if (rxRes.status === 'fulfilled' && rxRes.value.ok) {
-      rxData = await rxRes.value.json();
-    }
-    
-    res.json({
-      callsign,
-      tx: txData,
-      rx: rxData,
-      timestamp: new Date().toISOString(),
-      stream: {
-        endpoint: `/api/pskreporter/stream/${callsign}`,
-        type: 'text/event-stream',
-        hint: 'Connect to SSE stream for real-time spots'
-      }
-    });
-    
-  } catch (error) {
-    logErrorOnce('PSKReporter', error.message);
-    res.json({ 
-      callsign, 
-      tx: { count: 0, reports: [] }, 
-      rx: { count: 0, reports: [] }, 
-      error: error.message 
-    });
-  }
+  });
 });
 
 // ============================================
@@ -3804,13 +3642,27 @@ function pskMqttConnect() {
   pskMqtt.client = client;
 
   client.on('connect', () => {
-    console.log(`[PSK-MQTT] Connected! Re-subscribing ${pskMqtt.subscribedCalls.size} callsigns...`);
     pskMqtt.connected = true;
     pskMqtt.reconnectAttempts = 0;
 
-    // Re-subscribe all active callsigns after reconnect
-    for (const call of pskMqtt.subscribedCalls) {
-      subscribeCallsign(call);
+    const count = pskMqtt.subscribedCalls.size;
+    if (count > 0) {
+      console.log(`[PSK-MQTT] Connected — subscribing ${count} callsigns`);
+      // Batch all topic subscriptions into a single subscribe call
+      const topics = [];
+      for (const call of pskMqtt.subscribedCalls) {
+        topics.push(`pskr/filter/v2/+/+/${call}/#`);
+        topics.push(`pskr/filter/v2/+/+/+/${call}/#`);
+      }
+      pskMqtt.client.subscribe(topics, { qos: 0 }, (err) => {
+        if (err) {
+          console.error(`[PSK-MQTT] Batch subscribe error:`, err.message);
+        } else {
+          console.log(`[PSK-MQTT] Subscribed ${count} callsigns (${topics.length} topics)`);
+        }
+      });
+    } else {
+      console.log('[PSK-MQTT] Connected (no active callsigns)');
     }
   });
 
@@ -3905,9 +3757,10 @@ function subscribeCallsign(call) {
   const rxTopic = `pskr/filter/v2/+/+/+/${call}/#`;
   pskMqtt.client.subscribe([txTopic, rxTopic], { qos: 0 }, (err) => {
     if (err) {
+      // "Connection closed" errors are expected during reconnects — 
+      // the on('connect') handler will re-subscribe all active callsigns
+      if (err.message && err.message.includes('onnection closed')) return;
       console.error(`[PSK-MQTT] Subscribe error for ${call}:`, err.message);
-    } else {
-      console.log(`[PSK-MQTT] Subscribed: ${call} (TX + RX)`);
     }
   });
 }
@@ -3918,9 +3771,8 @@ function unsubscribeCallsign(call) {
   const rxTopic = `pskr/filter/v2/+/+/+/${call}/#`;
   pskMqtt.client.unsubscribe([txTopic, rxTopic], (err) => {
     if (err) {
+      if (err.message && err.message.includes('onnection closed')) return;
       console.error(`[PSK-MQTT] Unsubscribe error for ${call}:`, err.message);
-    } else {
-      console.log(`[PSK-MQTT] Unsubscribed: ${call}`);
     }
   });
 }
@@ -4552,7 +4404,7 @@ app.get('/api/wspr/heatmap', async (req, res) => {
     
     const response = await fetch(url, {
       headers: { 
-        'User-Agent': 'OpenHamClock/15.1.6 (Amateur Radio Dashboard)',
+        'User-Agent': 'OpenHamClock/15.1.7 (Amateur Radio Dashboard)',
         'Accept': '*/*'
       },
       signal: controller.signal
@@ -6794,7 +6646,7 @@ function generateStatusDashboard() {
             const consecutive = upstream.backoffs.get(svc)?.consecutive || 0;
             const prefix = svc === 'pskreporter' ? ['psk:', 'wspr:'] : ['weather:'];
             const inFlight = [...upstream.inFlight.keys()].filter(k => prefix.some(p => k.startsWith(p))).length;
-            const label = svc === 'pskreporter' ? 'PSKReporter (PSK + WSPR)' : 'Open-Meteo (Intl Weather)';
+            const label = svc === 'pskreporter' ? 'PSKReporter (WSPR Heatmap)' : 'Open-Meteo (Intl Weather)';
             return `<tr>
               <td>${label}</td>
               <td style="color: ${backedOff ? '#ff4444' : '#00ff88'}">${backedOff ? '⛔ Backoff' : '✅ OK'}</td>
@@ -7059,7 +6911,7 @@ const weatherCache = new Map();          // key: "weather:lat,lon" → { data, t
 const nwsPointsCache = new Map();        // key: "lat,lon" → { gridId, gridX, gridY, stationUrl } (never expires)
 const WEATHER_CACHE_TTL = 2 * 60 * 60 * 1000;  // 2 hours
 const WEATHER_STALE_TTL = 6 * 60 * 60 * 1000;  // Serve stale data up to 6 hours if upstream is down
-const NWS_USER_AGENT = 'OpenHamClock/15.1.6 (https://openhamclock.com, Amateur Radio Dashboard)';
+const NWS_USER_AGENT = 'OpenHamClock/15.1.7 (https://openhamclock.com, Amateur Radio Dashboard)';
 
 // Rough bounding box for US coverage (CONUS + Alaska + Hawaii + territories)
 function isUSCoordinates(lat, lon) {
