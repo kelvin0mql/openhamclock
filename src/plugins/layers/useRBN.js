@@ -690,7 +690,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
       marker.bindPopup(`
         <div style="font-family: 'JetBrains Mono', monospace;">
           <b>📡 ${skimmerCall}</b><br>
-          Heard: <b>${callsign}</b><br>
+          <b>${skimmerCall} From ${callsign}</b><br>
           SNR: <b>${snr} dB</b><br>
           Band: <b>${band}</b><br>
           Freq: <b>${(freq/1000).toFixed(1)} kHz</b><br>

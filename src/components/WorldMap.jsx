@@ -751,7 +751,7 @@ export const WorldMap = ({
               opacity: 0.9,
               fillOpacity: 0.8
             }).bindPopup(`
-              <b>${displayCall}</b><br>
+              <b>${spot.direction === 'rx' ? `From ${spot.sender}` : `${spot.receiver} From ${spot.sender}`}</b><br>
               ${spot.mode} @ ${freqMHz} MHz<br>
               ${spot.snr !== null ? `SNR: ${spot.snr > 0 ? '+' : ''}${spot.snr} dB` : ''}
             `).addTo(map);
@@ -835,7 +835,7 @@ export const WorldMap = ({
                 iconAnchor: [4, 4]
               })
             }).bindPopup(`
-              <b>${call}</b> ${spot.type === 'CQ' ? 'CQ' : ''}<br>
+              <b>From ${call}</b>${spot.type === 'CQ' ? ' (CQ)' : ''}<br>
               ${spot.grid || ''} ${spot.band || ''}${spot.gridSource === 'prefix' ? ' <i>(est)</i>' : spot.gridSource === 'cache' ? ' <i>(prev)</i>' : ''}<br>
               ${spot.mode || ''} SNR: ${spot.snr != null ? (spot.snr >= 0 ? '+' : '') + spot.snr : '?'} dB
             `).addTo(map);

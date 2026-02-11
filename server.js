@@ -8022,6 +8022,7 @@ function handleWSJTXMessage(msg, state) {
     }
     
     case WSJTX_MSG.WSPR_DECODE: {
+      const coords = msg.grid ? gridToLatLon(msg.grid) : null;
       const wsprDecode = {
         clientId: msg.id,
         isNew: msg.isNew,
@@ -8031,13 +8032,27 @@ function handleWSJTXMessage(msg, state) {
         frequency: msg.frequency,
         drift: msg.drift,
         callsign: msg.callsign,
+        caller: msg.callsign, // For map consistency
         grid: msg.grid,
+        lat: coords ? coords.latitude : null,
+        lon: coords ? coords.longitude : null,
         power: msg.power,
+        mode: 'WSPR',
         timestamp: msg.timestamp,
       };
       if (msg.isNew) {
         state.wspr.push(wsprDecode);
         if (state.wspr.length > 100) state.wspr.shift();
+        
+        // Also add to decodes for mapping if it has a location
+        if (wsprDecode.lat) {
+          state.decodes.push(wsprDecode);
+          const cutoff = Date.now() - WSJTX_MAX_AGE;
+          while (state.decodes.length > WSJTX_MAX_DECODES || 
+                 (state.decodes.length > 0 && state.decodes[0].timestamp < cutoff)) {
+            state.decodes.shift();
+          }
+        }
       }
       break;
     }
