@@ -23,3 +23,5 @@ export { WeatherPanel } from './WeatherPanel.jsx';
 export { AnalogClockPanel } from './AnalogClockPanel.jsx';
 export { default as AmbientPanel } from './AmbientPanel.jsx';
 export { default as BandHealthPanel } from './BandHealthPanel.jsx';
+export { default as RotatorPanel } from './RotatorPanel.jsx';
+export { default as RotatorMapOverlay } from './RotatorMapOverlay.jsx';
