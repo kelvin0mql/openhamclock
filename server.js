@@ -1296,8 +1296,12 @@ async function autoUpdateTick(trigger = 'interval', force = false) {
     logInfo('[Auto Update] Update complete');
 
     if (AUTO_UPDATE_EXIT_AFTER) {
-      logInfo('[Auto Update] Exiting to allow restart');
-      process.exit(0);
+      // Exit with code 75 (EX_TEMPFAIL) — a non-zero code that signals
+      // "restart me" to systemd's Restart=on-failure AND Restart=always.
+      // Previous versions used exit(0) which was clean/success, causing
+      // Restart=on-failure to NOT restart the service.
+      logInfo('[Auto Update] Restarting service (exit 75)...');
+      process.exit(75);
     }
   } catch (err) {
     autoUpdateState.lastResult = 'error';
@@ -8748,6 +8752,20 @@ if (N1MM_ENABLED) {
   console.log('');
 
   startAutoUpdateScheduler();
+  
+  // Check for outdated systemd service file that prevents auto-update restart
+  if (AUTO_UPDATE_ENABLED && (process.env.INVOCATION_ID || process.ppid === 1)) {
+    try {
+      const serviceFile = fs.readFileSync('/etc/systemd/system/openhamclock.service', 'utf8');
+      if (serviceFile.includes('Restart=on-failure') && !serviceFile.includes('Restart=always')) {
+        console.log('  ⚠️  Your systemd service file uses Restart=on-failure');
+        console.log('     Auto-updates may not restart properly.');
+        console.log('     Fix: sudo sed -i "s/Restart=on-failure/Restart=always/" /etc/systemd/system/openhamclock.service');
+        console.log('     Then: sudo systemctl daemon-reload');
+        console.log('');
+      }
+    } catch { /* Not running as systemd service, or can't read file — ignore */ }
+  }
 
   // Pre-warm N0NBH cache so solar-indices has current SFI/SSN on first request
   setTimeout(async () => {
