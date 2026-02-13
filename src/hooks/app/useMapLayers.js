@@ -9,6 +9,7 @@ export default function useMapLayers() {
     showDXLabels: true,
     showPOTA: true,
     showPOTALabels: true,
+    showSOTA: true,
     showSatellites: false,
     showPSKReporter: true,
     showWSJTX: true,
@@ -28,7 +29,7 @@ export default function useMapLayers() {
         return defaults;
       }
 
-      // ✅ Force rotator OFF on startup
+      // Force rotator OFF on startup
       return { ...defaults, ...parsed, showRotatorBearing: false };
     } catch (e) {
       return defaults;
@@ -48,6 +49,7 @@ export default function useMapLayers() {
   const toggleDXLabels = useCallback(() => setMapLayers(prev => ({ ...prev, showDXLabels: !prev.showDXLabels })), []);
   const togglePOTA = useCallback(() => setMapLayers(prev => ({ ...prev, showPOTA: !prev.showPOTA })), []);
   const togglePOTALabels = useCallback(() => setMapLayers(prev => ({ ...prev, showPOTALabels: !prev.showPOTALabels })), []);
+  const toggleSOTA = useCallback(() => setMapLayers(prev => ({ ...prev, showSOTA: !prev.showSOTA })), []);
   const toggleSatellites = useCallback(() => setMapLayers(prev => ({ ...prev, showSatellites: !prev.showSatellites })), []);
   const togglePSKReporter = useCallback(() => setMapLayers(prev => ({ ...prev, showPSKReporter: !prev.showPSKReporter })), []);
   const toggleWSJTX = useCallback(() => setMapLayers(prev => ({ ...prev, showWSJTX: !prev.showWSJTX })), []);
@@ -63,6 +65,7 @@ export default function useMapLayers() {
     toggleDXLabels,
     togglePOTA,
     togglePOTALabels,
+    toggleSOTA,
     toggleSatellites,
     togglePSKReporter,
     toggleWSJTX,

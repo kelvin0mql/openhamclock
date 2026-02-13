@@ -2,6 +2,37 @@
 
 All notable changes to OpenHamClock will be documented in this file.
 
+## [15.2.12] - 2026-02-12
+
+### Fixed
+- **Critical memory leak (OOM at 4GB after ~24h)** — Multiple unbounded data structures in the PSK-MQTT proxy caused heap exhaustion:
+  - `recentSpots` had no cap on insert — spots were `.push()`ed with no limit, only trimmed to 500 every 5 minutes. With 1000+ subscribed callsigns, hundreds of thousands of spots accumulated between cleanups. Now capped at 200 per callsign at insert time.
+  - `recentSpots` and `spotBuffer` entries were never cleaned up when callsigns unsubscribed — every callsign that disconnected left behind up to 500 spots for up to 1 hour. Over 24 hours with thousands of unique visitors, this accumulated hundreds of MB of orphaned spot data. Now deleted immediately on unsubscribe.
+  - `spotBuffer` entries for unsubscribed callsigns were never cleaned in the 5-minute cleanup cycle (flush only iterated `subscribers`, not `spotBuffer`). Now cleaned.
+  - `mySpotsCache` (HamQTH spot lookups) grew forever with no eviction. Now cleaned every 2 minutes.
+  - Removed dead `pskReporterSpots` cache (tx/rx Maps with cleanup timer) that was never written to
+- **Added memory monitoring** — Logs RSS, heap usage, and data structure sizes every 15 minutes for leak detection
+- **Set explicit Node.js heap limit** (512MB) in Dockerfile to fail fast on leaks instead of slow-dying at 4GB
+
+## [15.2.11] - 2026-02-11
+
+### Added
+- **ID Timer panel (Dockable layout)** — 10-minute countdown timer that reminds operators to identify their station. Displays a large countdown with progress bar; in the final minute the display turns red and pulses. At expiration, plays three short beeps via Web Audio API and shows a full-screen overlay with your callsign in large blinking text. Clicking anywhere dismisses the alert and resets the timer. Start/Stop button lets operators pause the timer when not on the air. Available from the `+` panel picker as 📢 ID Timer
+
+### Fixed
+- **PSK-MQTT reconnect fork bomb** — When the MQTT broker connection dropped, `pskMqttConnect()` called `.end(true)` on the old client, which fired its `close` event, which called `scheduleMqttReconnect()`, which called `pskMqttConnect()` again — each cycle doubling the number of pending reconnect chains. Over hours of downtime this created hundreds of parallel reconnect loops, flooding logs with `Disconnected from mqtt.pskreporter.info` and exhausting resources. Three fixes: (1) strip all event listeners from old client before `.end(true)` so its `close` event can't schedule a reconnect; (2) stale-client guard on `close`/`error`/`offline` handlers — only react if the firing client is still the current one; (3) single reconnect timer — `clearTimeout` before scheduling a new reconnect, preventing multiple pending timers
+
+## [15.2.10] - 2026-02-11
+
+### Added
+- **SOTA (Summits on the Air) panel** — New SOTA activator spots panel alongside POTA. In Classic and Modern layouts, the POTA slot now has POTA/SOTA tabs (like the Solar panel cycling) with independent Map ON/OFF toggles for each. In Dockable layout, SOTA is a fully separate panel in the panel picker (⛰️) so you can dock it independently, stack it with POTA, or place it anywhere
+- **SOTA map markers** — Orange diamond markers for SOTA activators on the world map (distinct from POTA's green triangles). Callsign labels shown when DX labels are enabled. Popup shows summit reference, name, and points. Separate `showSOTA` map layer toggle. Legend shows `◆ SOTA` when active
+- **SOTA data hook** — `useSOTASpots` fetches from the existing `/api/sota/spots` server endpoint (SOTA API v2). Maps summit details including lat/lon, altitude, and activation points. 2-minute refresh cycle matching POTA
+
+### Fixed
+- **DX location lock not working** — Clicking callsigns in DX Cluster or PSK Reporter panels moved the DX point even when locked. Lock check was only in the WorldMap click handler; `handleDXChange` in `useDXLocation` now gates all updates through `dxLockedRef`
+- **Map overlays disappear at dateline (#327)** — Replaced antimeridian path splitting with world-copy duplication (same approach as the GrayLine plugin). Polylines and circle markers are now rendered at -360°, 0°, +360° longitude offsets so they appear on every visible map copy. Affects DX Cluster paths, PSK Reporter paths, WSJT-X paths, satellite tracks/footprints, great circle lines, and contest QSO lines. Users in Australia, New Zealand, and Pacific islands no longer lose spots when panning
+
 ## [15.1.9] - 2026-02-10
 
 ### Added
@@ -12,6 +43,8 @@ All notable changes to OpenHamClock will be documented in this file.
 - **RBN only showing CW spots** — The RBN telnet parser regex required a `WPM` field, which only CW spots have. FT8, FT4, RTTY, and PSK spots were silently dropped. Fixed regex to match all spot formats by terminating at `dB` and optionally extracting WPM/BPS speed afterward. RBN buffer increased from 500 → 2000 spots
 - **"fatal: couldn't find remote ref" on update (#293)** — Update script and server-side git functions didn't handle broken git state: missing/wrong remote URL, detached HEAD, stale remote refs, or missing upstream tracking. Now auto-fixes remote URL, fetches with `--prune`, detects and recovers detached HEAD, sets upstream tracking, and falls back to `git reset --hard` if `git pull` fails
 - **K-Index forecast bars not rendering** — Extra wrapper `<div>` with `flexDirection: column` broke the parent's `alignItems: flex-end` height calculation, collapsing bar heights to zero
+- **PSK-MQTT "Batch subscribe error" log spam** — When the MQTT broker connection was unstable, each reconnect cycle logged `Batch subscribe error: Connection closed` for every attempt. Now suppresses expected "Connection closed" errors in the batch subscribe callback (same fix as v15.1.6 for individual subscribes). Also: MQTT `on('error')` no longer double-logs "Connection closed" alongside `on('close')`; disconnect messages use `logErrorOnce` to dedup; reconnect messages throttled to 1st attempt and every 5th
+- **WSPR Heatmap double-logging 503 errors** — Each 503 response logged twice: once from the fetch handler with the backoff duration, and again from the catch block. Also, changing backoff values (`36s`, `72s`, etc.) defeated `logErrorOnce` dedup. Fixed: single log line per failure, stable dedup key
 
 ## [15.1.8] - 2026-02-10
 

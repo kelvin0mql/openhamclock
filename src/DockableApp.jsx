@@ -11,6 +11,7 @@ import {
   WorldMap,
   DXClusterPanel,
   POTAPanel,
+  SOTAPanel,
   ContestPanel,
   SolarPanel,
   PropagationPanel,
@@ -20,7 +21,8 @@ import {
   PSKReporterPanel,
   WeatherPanel,
   AmbientPanel,
-  AnalogClockPanel
+  AnalogClockPanel,
+  IDTimerPanel
 } from './components';
 
 import { loadLayout, saveLayout, DEFAULT_LAYOUT } from './store/layoutStore.js';
@@ -67,6 +69,7 @@ export const DockableApp = ({
   // Spots & data
   dxClusterData,
   potaSpots,
+  sotaSpots,
   mySpots,
   dxpeditions,
   contests,
@@ -90,6 +93,7 @@ export const DockableApp = ({
   toggleDXLabels,
   togglePOTA,
   togglePOTALabels,
+  toggleSOTA,
   toggleSatellites,
   togglePSKReporter,
   toggleWSJTX,
@@ -209,8 +213,10 @@ export const DockableApp = ({
     'psk-reporter': { name: 'PSK Reporter', icon: '📡' },
     'dxpeditions': { name: 'DXpeditions', icon: '🏝️' },
     'pota': { name: 'POTA', icon: '🏕️' },
+    'sota': { name: 'SOTA', icon: '⛰️' },
     'contests': { name: 'Contests', icon: '🏆' },
     'ambient': { name: 'Ambient Weather', icon: '🌦️' },
+    'id-timer': { name: 'ID Timer', icon: '📢' },
   }), []);
 
   // Add panel
@@ -322,8 +328,6 @@ export const DockableApp = ({
     }
     return data;
   }, []);
-  // Render World Map
-
     // Render World Map
     const renderWorldMap = useCallback(() => {
       return (
@@ -335,6 +339,7 @@ export const DockableApp = ({
             dxLocked={dxLocked}
 
             potaSpots={potaSpots.data}
+            sotaSpots={sotaSpots.data}
             mySpots={mySpots.data}
             dxPaths={dxClusterData.paths}
             dxFilters={dxFilters}
@@ -348,6 +353,7 @@ export const DockableApp = ({
 
             showPOTA={mapLayersEff.showPOTA}
             showPOTALabels={mapLayersEff.showPOTALabels}
+            showSOTA={mapLayersEff.showSOTA}
 
             showSatellites={mapLayersEff.showSatellites}
             onToggleSatellites={toggleSatellitesEff}
@@ -376,6 +382,7 @@ export const DockableApp = ({
       handleDXChange,
       dxLocked,
       potaSpots.data,
+      sotaSpots.data,
       mySpots.data,
       dxClusterData.paths,
       dxFilters,
@@ -488,6 +495,7 @@ export const DockableApp = ({
         content = (
           <PSKReporterPanel
             callsign={config.callsign}
+            pskReporter={pskReporter}
             showOnMap={mapLayersEff.showPSKReporter}
             onToggleMap={togglePSKReporterEff}
             filters={pskFilters}
@@ -531,6 +539,10 @@ export const DockableApp = ({
         );
         break;
 
+      case 'sota':
+        content = <SOTAPanel data={sotaSpots.data} loading={sotaSpots.loading} showOnMap={mapLayers.showSOTA} onToggleMap={toggleSOTA} />;
+        break;
+
       case 'contests':
         content = <ContestPanel data={contests.data} loading={contests.loading} />;
         break;
@@ -561,6 +573,11 @@ export const DockableApp = ({
           />
         );
         break;
+
+      case 'id-timer':
+        content = <IDTimerPanel callsign={config.callsign} />;
+        break;
+
       default:
         content = (
           <div style={{ padding: '20px', color: '#ff6b6b', textAlign: 'center' }}>
@@ -582,10 +599,10 @@ export const DockableApp = ({
     return content;
   }, [
     config, deGrid, dxGrid, dxLocation, deSunTimes, dxSunTimes, showDxWeather, tempUnit, localWeather, dxWeather, solarIndices,
-    propagation, bandConditions, dxClusterData, dxFilters, hoveredSpot, mapLayers, potaSpots,
+    propagation, bandConditions, dxClusterData, dxFilters, hoveredSpot, mapLayers, potaSpots, sotaSpots,
     mySpots, satellites, filteredSatellites, filteredPskSpots, wsjtxMapSpots, dxpeditions, contests,
     pskFilters, wsjtx, handleDXChange, setDxFilters, setShowDXFilters, setShowPSKFilters,
-    setHoveredSpot, toggleDXPaths, toggleDXLabels, togglePOTA, toggleSatellites, togglePSKReporter, toggleWSJTX,
+    setHoveredSpot, toggleDXPaths, toggleDXLabels, togglePOTA, toggleSOTA, toggleSatellites, togglePSKReporter, toggleWSJTX,
     dxLocked, handleToggleDxLock, panelZoom
   ]);
 
