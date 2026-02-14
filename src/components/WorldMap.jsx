@@ -773,8 +773,8 @@ export const WorldMap = ({
         let spotLat = parseFloat(spot.lat);
         let spotLon = parseFloat(spot.lon);
         
-        if (!isNaN(spotLat) && !isNaN(spotLon)) {
-          const displayCall = spot.receiver || spot.sender;
+          if (!isNaN(spotLat) && !isNaN(spotLon)) {
+          const displayCall = spot.direction === 'rx' ? spot.sender : spot.receiver;
           const freqMHz = spot.freqMHz || (spot.freq ? (spot.freq / 1000000).toFixed(3) : '?');
           const bandColor = getBandColor(parseFloat(freqMHz));
           

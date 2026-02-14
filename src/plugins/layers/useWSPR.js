@@ -1084,7 +1084,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
       path.bindPopup(`
         <div style="font-family: 'JetBrains Mono', monospace; min-width: 240px;">
           <div style="font-size: 13px; font-weight: bold; color: ${getSNRColor(spot.snr)}; margin-bottom: 8px; text-align: center;">
-            ${spot.sender} ⇢ ${spot.receiver}
+            ${spot.isAggregated ? (spot.sender + ' ⇢ ' + spot.receiver) : (spot.direction === 'rx' ? spot.sender : spot.receiver)}
           </div>
           ${spot.isAggregated ? `
           <div style="font-size: 11px; text-align: center; margin-bottom: 8px; color: #00ccff;">
@@ -1134,7 +1134,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
         let txDetails = `
           <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; min-width: 220px;">
             <div style="font-weight: bold; color: #ff6600; margin-bottom: 6px; font-size: 12px;">📡 TX Station</div>
-            <div style="margin-bottom: 6px;"><b style="font-size: 13px;">${spot.sender}</b> ⇢ <b style="font-size: 13px;">${spot.receiver}</b></div>
+            <div style="margin-bottom: 6px;"><b style="font-size: 13px;">${spot.direction === 'rx' ? spot.sender : spot.receiver}</b></div>
             <div style="opacity: 0.7; margin-bottom: 8px;">Grid: ${spot.senderGrid}</div>
         `;
         
@@ -1201,7 +1201,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
         let rxDetails = `
           <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; min-width: 220px;">
             <div style="font-weight: bold; color: #0088ff; margin-bottom: 6px; font-size: 12px;">📻 RX Station</div>
-            <div style="margin-bottom: 6px;"><b style="font-size: 13px;">${spot.sender}</b> ⇢ <b style="font-size: 13px;">${spot.receiver}</b></div>
+            <div style="margin-bottom: 6px;"><b style="font-size: 13px;">${spot.direction === 'rx' ? spot.sender : spot.receiver}</b></div>
             <div style="opacity: 0.7; margin-bottom: 8px;">Grid: ${spot.receiverGrid}</div>
         `;
         
